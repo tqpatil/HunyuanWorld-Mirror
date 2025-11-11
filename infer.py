@@ -4,9 +4,11 @@ from pathlib import Path
 import os
 import time
 
+import cv2
 import numpy as np
 import torch
 from PIL import Image
+import onnxruntime
 
 from src.models.models.worldmirror import WorldMirror
 from src.utils.inference_utils import prepare_images_to_tensor
@@ -21,52 +23,108 @@ from src.utils.render_utils import render_interpolated_video
 from src.utils.build_pycolmap_recon import build_pycolmap_reconstruction
 from src.models.utils.camera_utils import vector_to_camera_matrices
 
+# Import mask computation utilities
+from src.utils.geometry import depth_edge, normals_edge
+from src.utils.visual_util import segment_sky, download_file_from_url
 
-def create_confidence_mask(confidence: torch.Tensor,
-                          conf_threshold_percent: float = 30.0) -> torch.Tensor:
+
+def create_filter_mask(
+    pts3d_conf: np.ndarray,
+    depth_preds: np.ndarray, 
+    normal_preds: np.ndarray,
+    sky_mask: np.ndarray,
+    confidence_percentile: float = 10.0,
+    edge_normal_threshold: float = 5.0,
+    edge_depth_threshold: float = 0.03,
+    apply_confidence_mask: bool = True,
+    apply_edge_mask: bool = True,
+    apply_sky_mask: bool = False,
+) -> np.ndarray:
     """
-    Create confidence mask for filtering points based on confidence threshold.
-    Discard bottom p% confidence points, keep top (100-p)%.
+    Create comprehensive filter mask based on confidence, edges, and sky segmentation.
+    This follows the same logic as app.py for consistent mask computation.
     
     Args:
-        confidence: Confidence scores (any shape)
-        conf_threshold_percent: Percentage of low-confidence points to filter out (0-100)
+        pts3d_conf: Point confidence scores [S, H, W]
+        depth_preds: Depth predictions [S, H, W, 1]
+        normal_preds: Normal predictions [S, H, W, 3]
+        sky_mask: Sky segmentation mask [S, H, W]
+        confidence_percentile: Percentile threshold for confidence filtering (0-100)
+        edge_normal_threshold: Normal angle threshold in degrees for edge detection
+        edge_depth_threshold: Relative depth threshold for edge detection
+        apply_confidence_mask: Whether to apply confidence-based filtering
+        apply_edge_mask: Whether to apply edge-based filtering
+        apply_sky_mask: Whether to apply sky mask filtering
     
     Returns:
-        Boolean mask for filtering points
+        final_mask: Boolean mask array [S, H, W] for filtering points
     """
-    # Flatten confidence scores
-    conf_flat = confidence.flatten()
-    # Mask out extremely small/invalid values
-    conf_flat = conf_flat.masked_fill(conf_flat <= 1e-5, float("-inf"))
+    S, H, W = pts3d_conf.shape[:3]
+    final_mask_list = []
     
-    N = conf_flat.numel()
+    for i in range(S):
+        final_mask = None
+        
+        if apply_confidence_mask:
+            # Compute confidence mask based on the pointmap confidence
+            confidences = pts3d_conf[i, :, :]  # [H, W]
+            percentile_threshold = np.quantile(confidences, confidence_percentile / 100.0)
+            conf_mask = confidences >= percentile_threshold
+            if final_mask is None:
+                final_mask = conf_mask
+            else:
+                final_mask = final_mask & conf_mask
+        
+        if apply_edge_mask:
+            # Compute edge mask based on the normalmap
+            normal_pred = normal_preds[i]  # [H, W, 3]
+            normal_edges = normals_edge(
+                normal_pred, tol=edge_normal_threshold, mask=final_mask
+            )
+            # Compute depth mask based on the depthmap
+            depth_pred = depth_preds[i, :, :, 0]  # [H, W]
+            depth_edges = depth_edge(
+                depth_pred, rtol=edge_depth_threshold, mask=final_mask
+            )
+            edge_mask = ~(depth_edges & normal_edges)
+            if final_mask is None:
+                final_mask = edge_mask
+            else:
+                final_mask = final_mask & edge_mask
+        
+        if apply_sky_mask:
+            # Apply sky mask filtering (sky_mask is already inverted: True = non-sky)
+            sky_mask_frame = sky_mask[i]  # [H, W]
+            if final_mask is None:
+                final_mask = sky_mask_frame
+            else:
+                final_mask = final_mask & sky_mask_frame
+        
+        final_mask_list.append(final_mask)
     
-    # Discard bottom p%, keep top (100-p)%
-    if conf_threshold_percent > 0:
-        keep_from_percent = int(np.ceil(N * (100.0 - conf_threshold_percent) / 100.0))
+    # Stack all frame masks
+    if final_mask_list[0] is not None:
+        final_mask = np.stack(final_mask_list, axis=0)  # [S, H, W]
     else:
-        keep_from_percent = N
-    K = max(1, keep_from_percent)
+        final_mask = np.ones(pts3d_conf.shape[:3], dtype=bool)  # [S, H, W]
     
-    # Select top-K indices (deterministic, no randomness)
-    topk_idx = torch.topk(conf_flat, K, largest=True, sorted=False).indices
-    
-    # Create mask
-    conf_mask = torch.zeros_like(conf_flat, dtype=torch.bool)
-    conf_mask[topk_idx] = True
-    
-    return conf_mask
+    return final_mask
 
 
 def main():
     parser = argparse.ArgumentParser(description="HunyuanWorld-Mirror inference")
     parser.add_argument("--input_path", type=str, default="examples/realistic/Ireland_Landscape", help="Input can be: a directory of images; a single video file; or a directory containing multiple video files (.mp4/.avi/.mov/.webm/.gif). If directory has multiple videos, frames from all clips are extracted (using --fps) and merged in filename order.")
     parser.add_argument("--output_path", type=str, default="inference_output")
-    parser.add_argument("--conf_threshold", type=float, default=0.0, help="Confidence threshold percentage for filtering points (0-100)")
     parser.add_argument("--fps", type=int, default=1, help="Frames per second for video extraction")
     parser.add_argument("--target_size", type=int, default=518, help="Target size for image resizing")
     parser.add_argument("--write_txt", action="store_true", help="Also write human-readable COLMAP txt (slow, huge)")
+    # Mask filtering parameters
+    parser.add_argument("--confidence_percentile", type=float, default=10.0, help="Confidence percentile threshold for filtering (0-100, filters bottom X percent)")
+    parser.add_argument("--edge_normal_threshold", type=float, default=5.0, help="Normal angle threshold in degrees for edge detection")
+    parser.add_argument("--edge_depth_threshold", type=float, default=0.03, help="Relative depth threshold for edge detection")
+    parser.add_argument("--apply_confidence_mask", action="store_true", default=True, help="Apply confidence-based filtering")
+    parser.add_argument("--apply_edge_mask", action="store_true", default=True, help="Apply edge-based filtering")
+    parser.add_argument("--apply_sky_mask", action="store_true", default=False, help="Apply sky mask filtering")
     # Save flags
     parser.add_argument("--save_pointmap", action="store_true", default=True, help="Save points PLY")
     parser.add_argument("--save_depth", action="store_true", default=True, help="Save depth PNG")
@@ -82,9 +140,12 @@ def main():
 
     # Print inference parameters
     print(f"🔧 Configuration:")
-    print(f"  - Confidence threshold: {args.conf_threshold}%")
     print(f"  - FPS: {args.fps}")
     print(f"  - Target size: {args.target_size}px")
+    print(f"  - Mask Filtering:")
+    print(f"    - Confidence mask: {'✅' if args.apply_confidence_mask else '❌'} (percentile: {args.confidence_percentile}%)")
+    print(f"    - Edge mask: {'✅' if args.apply_edge_mask else '❌'} (normal: {args.edge_normal_threshold}°, depth: {args.edge_depth_threshold})")
+    print(f"    - Sky mask: {'✅' if args.apply_sky_mask else '❌'}")
     print(f"  - Conditioning:")
     print(f"    - Pose: {'✅' if args.cond_pose else '❌'}")
     print(f"    - Intrinsics: {'✅' if args.cond_intrinsics else '❌'}")
@@ -159,6 +220,30 @@ def main():
             predictions = model(views=views, cond_flags=cond_flags)  # Multi-modal inference with priors
     print(f"🕒 Inference time: {time.time() - start_time:.3f} seconds")
     
+    # 4.5) Sky mask segmentation (if needed)
+    sky_mask = None
+    if args.apply_sky_mask:
+        print("\n🌤️  Computing sky masks...")
+        if not os.path.exists("skyseg.onnx"):
+            print("Downloading skyseg.onnx...")
+            download_file_from_url(
+                "https://huggingface.co/JianyuanWang/skyseg/resolve/main/skyseg.onnx", "skyseg.onnx"
+            )
+        skyseg_session = onnxruntime.InferenceSession("skyseg.onnx")
+        sky_mask_list = []
+        for i, img_path in enumerate(img_paths):
+            sky_mask_frame = segment_sky(img_path, skyseg_session)
+            # Resize mask to match H×W if needed
+            if sky_mask_frame.shape[0] != H or sky_mask_frame.shape[1] != W:
+                sky_mask_frame = cv2.resize(sky_mask_frame, (W, H))
+            sky_mask_list.append(sky_mask_frame)
+        sky_mask = np.stack(sky_mask_list, axis=0)  # [S, H, W]
+        sky_mask = sky_mask > 0  # Binary mask: True = non-sky, False = sky
+        print(f"✅ Sky masks computed for {S} frames")
+    else:
+        # Create dummy sky mask (all True = keep all points)
+        sky_mask = np.ones((S, H, W), dtype=bool)
+    
     # 5) Save results
     print("\n📤 Saving results...")
     images_dir = outdir / "images" # original resolution images
@@ -192,35 +277,53 @@ def main():
 
         processed_image_names.append(fname)
         
-    # save pointmap
+    # save pointmap with filtering
     if "pts3d" in predictions and args.save_pointmap:
+        print("Computing filter mask for pointmap...")
+        
+        # Prepare data for mask computation
+        pts3d_conf_np = predictions["pts3d_conf"][0].detach().cpu().numpy()  # [S, H, W]
+        depth_preds_np = predictions["depth"][0].detach().cpu().numpy()  # [S, H, W, 1]
+        normal_preds_np = predictions["normals"][0].detach().cpu().numpy()  # [S, H, W, 3]
+        
+        # Compute comprehensive filter mask
+        final_mask = create_filter_mask(
+            pts3d_conf=pts3d_conf_np,
+            depth_preds=depth_preds_np,
+            normal_preds=normal_preds_np,
+            sky_mask=sky_mask,
+            confidence_percentile=args.confidence_percentile,
+            edge_normal_threshold=args.edge_normal_threshold,
+            edge_depth_threshold=args.edge_depth_threshold,
+            apply_confidence_mask=args.apply_confidence_mask,
+            apply_edge_mask=args.apply_edge_mask,
+            apply_sky_mask=args.apply_sky_mask,
+        )  # [S, H, W]
+        
+        # Collect points and colors
         pts_list = []
         pts_colors_list = []
-        pts_conf_list = []
         
         for i in range(S):
             pts = predictions["pts3d"][0, i]  # [H,W,3]
-            pts_conf = predictions["pts3d_conf"][0, i]  # [H,W]
             img_colors = imgs[0, i].permute(1, 2, 0)  # [H, W, 3]
             img_colors = (img_colors * 255).to(torch.uint8)
             
             pts_list.append(pts.reshape(-1, 3))
             pts_colors_list.append(img_colors.reshape(-1, 3))
-            pts_conf_list.append(pts_conf.reshape(-1))
 
         all_pts = torch.cat(pts_list, dim=0)
         all_colors = torch.cat(pts_colors_list, dim=0)
-        all_conf = torch.cat(pts_conf_list, dim=0)
-        # Apply filtering using mask (optional)
-        conf_mask = create_confidence_mask(
-            all_conf,
-            conf_threshold_percent=args.conf_threshold,
-        )
-        filtered_pts = all_pts[conf_mask]
-        filtered_colors = all_colors[conf_mask]
         
-        save_scene_ply(outdir / "pts.ply", filtered_pts, filtered_colors)
-        print(f"  - Saved {len(filtered_pts)} points to {outdir / 'pts.ply'}")
+        # Apply filter mask
+        final_mask_flat = final_mask.reshape(-1)  # Flatten to [S*H*W]
+        final_mask_torch = torch.from_numpy(final_mask_flat).to(all_pts.device)
+        
+        filtered_pts = all_pts[final_mask_torch]
+        filtered_colors = all_colors[final_mask_torch]
+        
+        save_scene_ply(outdir / "pts_from_pointmap.ply", filtered_pts, filtered_colors)
+        print(f"  - Saved {len(filtered_pts)} filtered points to {outdir / 'pts_from_pointmap.ply'}")
 
     # save depthmap
     if "depth" in predictions and args.save_depth:
@@ -268,8 +371,30 @@ def main():
 
     # Build and export COLMAP reconstruction (images + sparse)
     if args.save_colmap:
+        print("Computing filter mask for COLMAP reconstruction...")
+        
         final_width, final_height = new_width, new_height
         print(f"colmap_width: {final_width}, colmap_height: {final_height}")
+        
+        # Prepare data for mask computation (reuse from pointmap if not already computed)
+        if not ("pts3d" in predictions and args.save_pointmap):
+            pts3d_conf_np = predictions["pts3d_conf"][0].detach().cpu().numpy()  # [S, H, W]
+            depth_preds_np = predictions["depth"][0].detach().cpu().numpy()  # [S, H, W, 1]
+            normal_preds_np = predictions["normals"][0].detach().cpu().numpy()  # [S, H, W, 3]
+            
+            # Compute comprehensive filter mask
+            final_mask = create_filter_mask(
+                pts3d_conf=pts3d_conf_np,
+                depth_preds=depth_preds_np,
+                normal_preds=normal_preds_np,
+                sky_mask=sky_mask,
+                confidence_percentile=args.confidence_percentile,
+                edge_normal_threshold=args.edge_normal_threshold,
+                edge_depth_threshold=args.edge_depth_threshold,
+                apply_confidence_mask=args.apply_confidence_mask,
+                apply_edge_mask=args.apply_edge_mask,
+                apply_sky_mask=args.apply_sky_mask,
+            )  # [S, H, W]
         
         # Prepare extrinsics/intrinsics (camera-from-world) using resized image size
         e3x4, intr = vector_to_camera_matrices(predictions["camera_params"], image_hw=(final_height, final_width))
@@ -280,7 +405,6 @@ def main():
                 
         points_list = []
         colors_list = []
-        conf_list = []
         xyf_list = []
 
         # Precompute pixel coordinate grid (XYF) like demo_colmap
@@ -295,7 +419,6 @@ def main():
         # to ensure consistency between Gaussian PLY and depth-based sparse points
         for i in range(S):
             d = predictions["depth"][0, i, :, :, 0]
-            d_conf = predictions["depth_conf"][0, i, :, :]
             w2c = extrinsics[i][:3, :4]  # [3, 4] camera-to-world
             w2c = torch.cat([w2c, torch.tensor([[0, 0, 0, 1]], device=w2c.device)], dim=0)  # [4,4]
             c2w = torch.linalg.inv(w2c)[:3, :4]  # [4,4]
@@ -303,32 +426,28 @@ def main():
             pts_i, _, mask = depth_to_world_coords_points(d[None], c2w[None], K[None])
 
             img_colors = (imgs[0, i].permute(1, 2, 0) * 255).to(torch.uint8)
-            valid = mask[0]
+            
+            # Apply filter mask from mask computation
+            filter_mask_frame = torch.from_numpy(final_mask[i]).to(mask.device)  # [H, W]
+            valid = mask[0] & filter_mask_frame  # Combine depth validity with filter mask
+            
             if valid.sum().item() == 0:
                 continue
             xyf_np = xyf_grid[i][valid.cpu().numpy()]  # [N,3] int32
             xyf_list.append(torch.from_numpy(xyf_np).to(valid.device))
             points_list.append(pts_i[0][valid])
             colors_list.append(img_colors[valid])
-            conf_list.append(d_conf[valid])
 
         all_pts = torch.cat(points_list, dim=0)
         all_cols = torch.cat(colors_list, dim=0)
-        all_conf = torch.cat(conf_list, dim=0)
         all_xyf = torch.cat(xyf_list, dim=0)
-
-        # Global confidence filtering
-        conf_mask = create_confidence_mask(
-            all_conf,
-            conf_threshold_percent=args.conf_threshold,
-        )
 
         # Convert to numpy
         extrinsics = extrinsics.detach().cpu().numpy()
         intrinsics = intrinsics.detach().cpu().numpy()
-        f_pts = all_pts[conf_mask].detach().cpu().to(torch.float32).numpy()
-        f_cols = all_cols[conf_mask].detach().cpu().to(torch.uint8).numpy()
-        f_xyf = all_xyf[conf_mask].detach().cpu().to(torch.int32).numpy()
+        f_pts = all_pts.detach().cpu().to(torch.float32).numpy()
+        f_cols = all_cols.detach().cpu().to(torch.uint8).numpy()
+        f_xyf = all_xyf.detach().cpu().to(torch.int32).numpy()
         
         # Scale 2D coordinates from processed image to resized image resolution (if still valid)
         f_xyf[:, 0] = (f_xyf[:, 0] * scale_x).astype(np.int32)  # x coordinates
