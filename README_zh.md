@@ -167,9 +167,9 @@ inputs['img'] = extract_load_and_preprocess_images(
 # 配置条件标志和先验路径
 cond_flags = [0, 0, 0]  # [camera_pose, depth, intrinsics]
 prior_data = {
-    'camera_pose': None,      # 相机位姿张量 [1, N, 4, 4]
+    'camera_poses': None,      # 相机位姿张量 [1, N, 4, 4]
     'depthmap': None,         # 深度图张量 [1, N, H, W]
-    'camera_intrinsics': None # 相机内参张量 [1, N, 3, 3]
+    'camera_intrs': None # 相机内参张量 [1, N, 3, 3]
 }
 for idx, (key, data) in enumerate(prior_data.items()):
     if data is not None:
