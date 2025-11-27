@@ -170,9 +170,9 @@ inputs['img'] = extract_load_and_preprocess_images(
 # Configure conditioning flags and prior paths
 cond_flags = [0, 0, 0]  # [camera_pose, depth, intrinsics]
 prior_data = {
-    'camera_pose': None,      # Camera pose tensor [1, N, 4, 4]
+    'camera_poses': None,      # Camera pose tensor [1, N, 4, 4]
     'depthmap': None,         # Depth map tensor [1, N, H, W]
-    'camera_intrinsics': None # Camera intrinsics tensor [1, N, 3, 3]
+    'camera_intrs': None # Camera intrinsics tensor [1, N, 3, 3]
 }
 for idx, (key, data) in enumerate(prior_data.items()):
     if data is not None:
