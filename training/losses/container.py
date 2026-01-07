@@ -94,12 +94,12 @@ class LossContainer(nn.Module):
     def _skip_bad_case(self, total_loss, loss_dict):
         """Skip bad cases by zeroing out losses with NaN/Inf values"""
         # Zero out total loss if it contains NaN or Inf
-        total_loss = torch.zeros_like(total_loss)
+        total_loss = total_loss * 0.0
         
         # Zero out all loss dict values
         for key, val in list(loss_dict.items()):
             if torch.is_tensor(val):
-                loss_dict[key] = torch.zeros_like(val)
+                loss_dict[key] = val * 0.0
             elif isinstance(val, (float, int)):
                 loss_dict[key] = 0.0
         
