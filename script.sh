@@ -10,4 +10,6 @@ cd pycolmap
 vim pyproject.toml
 mv pycolmap/ pycolmap2/
 python3 -m pip install -e .
-
+cd ~/HunyuanWorld-Mirror 
+mkdir houtput
+cp -r /mnt/temp-data-volume/video ./houtput
