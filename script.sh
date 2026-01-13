@@ -13,3 +13,5 @@ python3 -m pip install -e .
 cd ~/HunyuanWorld-Mirror 
 mkdir houtput
 cp -r /mnt/temp-data-volume/video ./houtput
+python infer.py --input_path ./houtput/video --output_path ./houtputOpt --save_colmap --save_gs
+
