@@ -13,7 +13,7 @@ pytest
 numpy<2.0.0
 trimesh
 roma
-open3d==0.18.0
+open3d
 einops
 gradio
 matplotlib
