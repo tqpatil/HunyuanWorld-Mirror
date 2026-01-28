@@ -6,7 +6,6 @@ import moviepy.editor as mpy
 
 from src.models.models.rasterization import GaussianSplatRenderer
 from src.models.utils.sh_utils import RGB2SH, SH2RGB
-from src.utils.gs_effects import GSEffects
 from src.utils.color_map import apply_color_map_to_image
 from tqdm import tqdm
 
@@ -126,8 +125,6 @@ def render_interpolated_video(gs_renderer: GaussianSplatRenderer,
                               out_path: Path,
                               interp_per_pair: int = 20,
                               loop_reverse: bool = True,
-                              effects: GSEffects = None,
-                              effect_type: int = 2,
                               save_mode: str = "split") -> None:
     # camtoworlds: [B, S, 4, 4], intrinsics: [B, S, 3, 3]
     b, s, _, _ = camtoworlds.shape
@@ -198,126 +195,27 @@ def render_interpolated_video(gs_renderer: GaussianSplatRenderer,
     else:
         all_ext, all_int = build_wobble_traj(interp_per_pair * 12, splats["means"][0].median(dim=0).values.norm(dim=-1)[None])
 
+    # Prune splats by merging those in the same voxel
+    try:
+        pruned_splats = gs_renderer.prune_gs(splats, gs_renderer.voxel_size)
+        print(f"Pruned splats: {splats['means'].shape[1]} -> {pruned_splats['means'].shape[0]}")
+    except Exception as e:
+        print(f"Splat pruning failed: {e}. Using original splats.")
+        pruned_splats = splats
+
     rendered_rgbs, rendered_depths = [], []
-    chunk = 40 if effects is None else 1
-    t = 0
-    t_skip = 0
-    if effects is not None:
-        try:
-            pruned_splats = gs_renderer.prune_gs(splats, gs_renderer.voxel_size)
-        except:
-            pruned_splats = splats
-        # indices = [x for x in range(0, all_ext.shape[1], 2)][:4]
-        # add_ext, add_int = build_interpolated_traj(indices, 150)
-        # add_ext = torch.flip(add_ext, dims=[1])
-        # add_int = torch.flip(add_int, dims=[1])
-        add_ext = all_ext[:, :1, :, :].repeat(1, 320, 1, 1)
-        add_int = all_int[:, :1, :, :].repeat(1, 320, 1, 1)
-        shift = pruned_splats["means"][0].median(dim=0).values
-        scale_factor = (pruned_splats["means"][0] - shift).abs().quantile(0.95, dim=0).max()
-        all_ext[0, :, :3, -1] = (all_ext[0, :, :3, -1] - shift) / scale_factor
-        add_ext[0, :, :3, -1] = (add_ext[0, :, :3, -1] - shift) / scale_factor
-        flag = None
-        try:
-            raw_splats = gs_renderer.rasterizer.runner.splats
-        except:
-            pass
-        for st in range(0, add_ext.shape[1]):
-            ed = min(st + 1, add_ext.shape[1])
-            assert gs_renderer.sh_degree == 0
-            if flag is not None and (flag < 0.99).any():
-                break
-            sample_gsplat = {"means": (pruned_splats["means"][0] - shift)/scale_factor, "quats": pruned_splats["quats"][0], "scales": pruned_splats["scales"][0]/scale_factor, 
-                            "opacities": pruned_splats["opacities"][0],"colors": SH2RGB(pruned_splats["sh"][0].reshape(-1, 3))}
-            effects_splats, flag = effects.apply_effect(sample_gsplat, t, effect_type=effect_type)
-            t += 0.04
-            effects_splats["sh"] = RGB2SH(effects_splats["colors"]).reshape(-1, 1, 3)
-            try:
-                gs_renderer.rasterizer.runner.splats
-                effects_splats["sh0"] = effects_splats["sh"][:, :1, :]
-                effects_splats["shN"] = effects_splats["sh"][:, 1:, :]
-                effects_splats["scales"] = effects_splats["scales"].log()
-                effects_splats["opacities"] = torch.logit(torch.clamp(effects_splats["opacities"], 1e-6, 1 - 1e-6))
-                gs_renderer.rasterizer.runner.splats = effects_splats
-                colors, depths, _ = gs_renderer.rasterizer.rasterize_batches(
-                None, None, None, 
-                None, None,
-                add_ext[:, st:ed].to(torch.float32), add_int[:, st:ed].to(torch.float32),
-                width=w, height=h, sh_degree=gs_renderer.sh_degree,
-                )
-            except:
-                colors, depths, _ = gs_renderer.rasterizer.rasterize_batches(
-                effects_splats["means"][None], effects_splats["quats"][None], effects_splats["scales"][None], 
-                effects_splats["opacities"][None], effects_splats["sh"][None],
-                add_ext[:, st:ed].to(torch.float32), add_int[:, st:ed].to(torch.float32),
-                width=w, height=h, sh_degree=gs_renderer.sh_degree if "sh" in pruned_splats else None,
-                )
-            
-            if st > add_ext.shape[1]*0.14:
-                t_skip = t if t_skip == 0 else t_skip
-                # break
-                rendered_rgbs.append(colors)
-                rendered_depths.append(depths)
-            # if (flag == 0).all():
-            #     break
-    t_st = t
-    t_ed = 0
-    loop_dir = 1
-    ignore_scale = False
+    chunk = 40
+    
     for st in tqdm(range(0, all_ext.shape[1], chunk)):
         ed = min(st + chunk, all_ext.shape[1])
-        if effects is not None:
-            try:
-                sample_gsplat = {"means": (pruned_splats["means"][0] - shift)/scale_factor, "quats": pruned_splats["quats"][0], "scales": pruned_splats["scales"][0]/scale_factor, 
-                                "opacities": pruned_splats["opacities"][0],"colors": SH2RGB(pruned_splats["sh"][0].reshape(-1, 3))}
-            except:
-                sample_gsplat = {"means": (pruned_splats["means"][0] - shift)/scale_factor, "quats": pruned_splats["quats"][0], "scales": pruned_splats["scales"][0]/scale_factor, 
-                                "opacities": pruned_splats["opacities"][0],"colors": SH2RGB(pruned_splats["sh"][0].reshape(-1, 3))}
-            effects_splats, flag = effects.apply_effect(sample_gsplat, t, effect_type=effect_type, ignore_scale=ignore_scale)
-            if loop_dir < 0:
-                t -= 0.04
-            else:
-                t += 0.04
-            if flag.mean() < 0.01 and t_ed == 0:
-                t_ed = t
-            effects_splats["sh"] = RGB2SH(effects_splats["colors"]).reshape(-1, 1, 3)
-            effects_splats["sh0"] = effects_splats["sh"][:, :1, :]
-            effects_splats["shN"] = effects_splats["sh"][:, 1:, :]
-            try:
-                gs_renderer.rasterizer.runner.splats
-                effects_splats["sh0"] = effects_splats["sh"][:, :1, :]
-                effects_splats["shN"] = effects_splats["sh"][:, 1:, :]
-                effects_splats["scales"] = effects_splats["scales"].log()
-                effects_splats["opacities"] = torch.logit(torch.clamp(effects_splats["opacities"], 1e-6, 1 - 1e-6))
-                gs_renderer.rasterizer.runner.splats = effects_splats
-                colors, depths, _ = gs_renderer.rasterizer.rasterize_batches(
-                None, None, None, 
-                None, None,
-                all_ext[:, st:ed].to(torch.float32), all_int[:, st:ed].to(torch.float32),
-                width=w, height=h, sh_degree=gs_renderer.sh_degree,
-                )
-            except:
-                colors, depths, _ = gs_renderer.rasterizer.rasterize_batches(
-                effects_splats["means"][None], effects_splats["quats"][None], effects_splats["scales"][None], 
-                effects_splats["opacities"][None], effects_splats["sh"][None],
-                all_ext[:, st:ed].to(torch.float32), all_int[:, st:ed].to(torch.float32),
-                width=w, height=h, sh_degree=gs_renderer.sh_degree if "sh" in pruned_splats else None,
-                )
-            
-            if t > (all_ext.shape[1]) * 0.04 + t_st - (t_ed - t_st)*2 - 15*0.04 or t < t_st:
-                # ignore_scale = True
-                loop_dir *= -1
-                t = t_ed if loop_dir == -1 else t
-        else:
-            colors, depths, _ = gs_renderer.rasterizer.rasterize_batches(
-                splats["means"][:1], splats["quats"][:1], splats["scales"][:1], splats["opacities"][:1],
-                splats["sh"][:1] if "sh" in splats else splats["colors"][:1],
-                all_ext[:, st:ed].to(torch.float32), all_int[:, st:ed].to(torch.float32),
-                width=w, height=h, sh_degree=gs_renderer.sh_degree if "sh" in splats else None,
-            )
+        colors, depths, _ = gs_renderer.rasterizer.rasterize_batches(
+            pruned_splats["means"][:1], pruned_splats["quats"][:1], pruned_splats["scales"][:1], pruned_splats["opacities"][:1],
+            pruned_splats["sh"][:1] if "sh" in pruned_splats else pruned_splats["colors"][:1],
+            all_ext[:, st:ed].to(torch.float32), all_int[:, st:ed].to(torch.float32),
+            width=w, height=h, sh_degree=gs_renderer.sh_degree if "sh" in pruned_splats else None,
+        )
         rendered_rgbs.append(colors)
         rendered_depths.append(depths)
-
 
     rgbs = torch.cat(rendered_rgbs, dim=1)[0]          # [N, H, W, 3]
     depths = torch.cat(rendered_depths, dim=1)[0, ..., 0]     # [N, H, W]
@@ -369,9 +267,4 @@ def render_interpolated_video(gs_renderer: GaussianSplatRenderer,
 
     print(f"Video saved to {out_path} (mode: {save_mode})")
 
-    if effects is not None:
-        try:
-            gs_renderer.rasterizer.runner.splats = raw_splats
-        except:
-            pass
     torch.cuda.empty_cache()
