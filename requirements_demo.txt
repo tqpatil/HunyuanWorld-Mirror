@@ -5,7 +5,7 @@ torchvision
 tqdm
 omegaconf
 pydantic
-opencv-python
+opencv-python-headless
 scipy
 requests
 trimesh
