@@ -176,7 +176,7 @@ class GaussianSplatRenderer(nn.Module):
         else:
             # Re-predict the camera for novel views and perform translation scale alignment
             pred_all_extrinsic, pred_all_intrinsic = self.prepare_cameras(predictions, S + V)
-            scale_factor = 1.0
+            scale_factor = torch.tensor(1.0, device=pred_all_extrinsic.device)
             if "camera_poses" in context_predictions:
                 pred_context_extrinsic, _ = self.prepare_cameras(context_predictions, S)
                 scale_factor = pred_context_extrinsic[:, :, :3, 3].norm(dim=-1).mean(dim=1, keepdim=True) / (
