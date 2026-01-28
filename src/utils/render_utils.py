@@ -196,6 +196,7 @@ def render_interpolated_video(gs_renderer: GaussianSplatRenderer,
         all_ext, all_int = build_wobble_traj(interp_per_pair * 12, splats["means"][0].median(dim=0).values.norm(dim=-1)[None])
 
     # Prune splats by merging those in the same voxel
+    pruned_splats = splats
     try:
         pruned_output = gs_renderer.prune_gs(splats, gs_renderer.voxel_size)
         # pruned_output is a dict where each value is a list of tensors (one per batch)
@@ -207,11 +208,9 @@ def render_interpolated_video(gs_renderer: GaussianSplatRenderer,
             else:
                 # Already a tensor
                 pruned_splats[key] = pruned_output[key]
-        print(f"Pruned splats: {splats['means'].shape[1]} -> {pruned_splats['means'].shape[1]}")
+        print(f"Splat pruning successful")
     except Exception as e:
         print(f"Splat pruning failed: {e}. Using original splats.")
-        import traceback
-        traceback.print_exc()
         pruned_splats = splats
 
     rendered_rgbs, rendered_depths = [], []
