@@ -18,7 +18,7 @@ einops
 gradio
 matplotlib
 tqdm
-opencv-python
+opencv-python-headless
 viser
 pillow_heif
 scipy
