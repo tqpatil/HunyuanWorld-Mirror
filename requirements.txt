@@ -31,3 +31,4 @@ moviepy==1.0.3
 plyfile
 pycolmap==3.10.0
 tyro
+onnxruntime
