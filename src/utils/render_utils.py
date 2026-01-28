@@ -198,14 +198,20 @@ def render_interpolated_video(gs_renderer: GaussianSplatRenderer,
     # Prune splats by merging those in the same voxel
     try:
         pruned_output = gs_renderer.prune_gs(splats, gs_renderer.voxel_size)
-        # Convert list format to tensor format [B, N, ...]
+        # pruned_output is a dict where each value is a list of tensors (one per batch)
         pruned_splats = {}
         for key in pruned_output:
-            # pruned_output[key] is a list of tensors, concatenate batch dimension
-            pruned_splats[key] = torch.stack(pruned_output[key], dim=0)
+            if isinstance(pruned_output[key], list):
+                # Stack list of tensors into single tensor with batch dimension
+                pruned_splats[key] = torch.stack(pruned_output[key], dim=0)
+            else:
+                # Already a tensor
+                pruned_splats[key] = pruned_output[key]
         print(f"Pruned splats: {splats['means'].shape[1]} -> {pruned_splats['means'].shape[1]}")
     except Exception as e:
         print(f"Splat pruning failed: {e}. Using original splats.")
+        import traceback
+        traceback.print_exc()
         pruned_splats = splats
 
     rendered_rgbs, rendered_depths = [], []
