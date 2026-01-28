@@ -18,6 +18,8 @@ einops
 gradio
 matplotlib
 pandas
+pytz 
+python-dateutil
 tqdm
 opencv-python-headless
 viser
