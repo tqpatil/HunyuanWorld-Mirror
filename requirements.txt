@@ -17,6 +17,7 @@ open3d
 einops
 gradio
 matplotlib
+pandas
 tqdm
 opencv-python-headless
 viser
