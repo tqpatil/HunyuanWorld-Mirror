@@ -351,7 +351,7 @@ class GaussianSplatRenderer(nn.Module):
         for i in range(B):
             # Extract splats for current batch
             splats_i = {k: splats[k][i] for k in ["means", "quats", "scales", "opacities", "sh", "weights"]}
-            
+            print(f"Num splats in batch {i} before pruning: {len(splats_i['means'])}")
             # Compute voxel indices
             coords = splats_i["means"]
             voxel_indices = (coords / voxel_size).floor().long()
