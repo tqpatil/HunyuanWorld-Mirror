@@ -189,11 +189,11 @@ class GaussianSplatRenderer(nn.Module):
         
         # 3) Generate splats from gs_params + predictions, and perform voxel merging
         if self.training:
-            splats = self.prepare_splats(views, predictions, images, gs_params, S, position_from="gsdepth+gtcamera")
+            splats, mapping = self.prepare_splats(views, predictions, images, gs_params, S, position_from="gsdepth+gtcamera")
         elif not is_inference:
-            splats = self.prepare_splats(views, predictions, images, gs_params, S, context_predictions, position_from="gsdepth+predcamera")
+            splats, mapping = self.prepare_splats(views, predictions, images, gs_params, S, context_predictions, position_from="gsdepth+predcamera")
         else:
-            splats = self.prepare_splats(views, predictions, images, gs_params, S, position_from="gsdepth+predcamera")
+            splats, mapping = self.prepare_splats(views, predictions, images, gs_params, S, position_from="gsdepth+predcamera")
 
         # Apply confidence filtering before pruning
         if self.enable_conf_filter and "gs_depth_conf" in predictions:
@@ -336,22 +336,26 @@ class GaussianSplatRenderer(nn.Module):
     def prune_gs(self, splats, voxel_size=0.002):
         """
         Prune Gaussian splats by merging those in the same voxel.
+        Reconciles view-to-splat mapping by assigning merged splats to the view
+        with the highest opacity contribution.
         
         Args:
             splats: Dictionary containing Gaussian parameters
             voxel_size: Size of voxels for spatial grouping
             
         Returns:
-            Dictionary with pruned splats
+            Dictionary with pruned splats and updated view_mapping
         """
         B = splats["means"].shape[0]
         merged_splats_list = []
+        merged_view_mapping_list = []
         device = splats["means"].device
+        view_mapping = splats.get("view_mapping", None)
 
         for i in range(B):
             # Extract splats for current batch
             splats_i = {k: splats[k][i] for k in ["means", "quats", "scales", "opacities", "sh", "weights"]}
-            print(f"Num splats in batch {i} before pruning: {len(splats_i['means'])}")
+            view_mapping_i = view_mapping[i] if view_mapping is not None else None  # [N]
             # Compute voxel indices
             coords = splats_i["means"]
             voxel_indices = (coords / voxel_size).floor().long()
@@ -412,12 +416,36 @@ class GaussianSplatRenderer(nn.Module):
             quat_norms = torch.norm(merged["quats"], dim=1, keepdim=True)
             merged["quats"] = merged["quats"] / torch.clamp(quat_norms, min=1e-8)
 
+            # Reconcile view mapping: assign each merged splat to the view with highest opacity contribution
+            if view_mapping_i is not None:
+                merged_view_mapping = torch.zeros(K, dtype=torch.long, device=device)
+                opacity_per_view = torch.zeros((K, view_mapping_i.max().item() + 1), device=device)
+                
+                # Accumulate opacities per view for each merged splat
+                for voxel_idx in range(K):
+                    # Find all original splats that merged into this voxel
+                    mask = inverse_indices == voxel_idx
+                    original_splat_indices = torch.where(mask)[0]
+                    original_views = view_mapping_i[original_splat_indices]
+                    original_opacities = splats_i["opacities"][original_splat_indices]
+                    
+                    # Sum opacities per view
+                    opacity_per_view[voxel_idx].scatter_add_(0, original_views, original_opacities)
+                
+                # Assign each merged splat to the view with max opacity contribution
+                merged_view_mapping = opacity_per_view.argmax(dim=1)
+                merged_view_mapping_list.append(merged_view_mapping)
+            
             merged_splats_list.append(merged)
 
         # Reorganize output
         output = {}
         for key in ["means", "sh", "opacities", "scales", "quats"]:
             output[key] = [merged[key] for merged in merged_splats_list]
+        
+        # Reorganize view mapping
+        if merged_view_mapping_list:
+            output["view_mapping"] = merged_view_mapping_list
         
         return output
 
@@ -437,6 +465,7 @@ class GaussianSplatRenderer(nn.Module):
             
         Returns:
             splats: Dictionary containing prepared Gaussian splat parameters
+            mapping: Optional mapping information from each view to set of splats
         """
         B, _, _, H, W = images.shape
         S = context_nums
@@ -450,7 +479,7 @@ class GaussianSplatRenderer(nn.Module):
         quats, scales, opacities, residual_sh, weights = torch.split(
             gs_params, [4, 3, 1, self.nums_sh * 3, 1], dim=-1
         )
-
+        print(quats.shape, scales.shape, opacities.shape, residual_sh.shape, weights.shape)
         # Apply activation functions to Gaussian parameters
         splats["quats"] = act_gs.reg_dense_rotation(quats.reshape(B, S * H * W, 4))
         splats["scales"] = act_gs.reg_dense_scales(scales.reshape(B, S * H * W, 3)).clamp_max(0.3)
@@ -490,6 +519,14 @@ class GaussianSplatRenderer(nn.Module):
             
         else:
             raise ValueError(f"Invalid position_from={position_from}")
+
+        # Create view-to-splat mapping: [B, N] tensor where N = S*H*W
+        # Each element stores the view index (0 to S-1) that this splat originated from
+        # View 0: splats 0 to H*W-1, View 1: splats H*W to 2*H*W-1, etc.
+        view_indices = torch.arange(S, device=images.device)
+        view_mapping = torch.repeat_interleave(view_indices, H * W).unsqueeze(0)
+        view_mapping = view_mapping.repeat(B, 1)  # [B, N]
+        splats["view_mapping"] = view_mapping
 
         return splats
 

@@ -9,7 +9,7 @@ from src.models.utils.sh_utils import RGB2SH, SH2RGB
 from src.utils.gs_effects import GSEffects
 from src.utils.color_map import apply_color_map_to_image
 from tqdm import tqdm
-
+from PIL import Image
 
 def rotation_matrix_to_quaternion(R):
     """Convert rotation matrix to quaternion"""
@@ -375,3 +375,140 @@ def render_interpolated_video(gs_renderer: GaussianSplatRenderer,
         except:
             pass
     torch.cuda.empty_cache()
+
+
+def save_incremental_splats_and_render(
+    splats,
+    predictions,
+    gs_renderer,
+    output_dir,
+    H,
+    W,
+    save_ply=True,
+    save_renders=True,
+):
+    """
+    Save splats incrementally as views accumulate, and render from those views.
+    
+    For each view index i (starting from 2), saves a PLY with splats from views 0..i,
+    then renders RGB and depth from the cameras of views 0..i.
+    
+    Args:
+        splats: Dictionary with splat parameters (means, quats, scales, opacities, sh)
+                and view_mapping [B, N] indicating which view each splat came from
+        predictions: Dictionary with camera_poses [B, V, 4, 4] and camera_intrs [B, 3, 3]
+        gs_renderer: GaussianSplatRenderer instance (for rendering)
+        output_dir: Path to save PLY and render files
+        H: Height of rendered images
+        W: Width of rendered images
+        save_ply: Whether to save PLY files
+        save_renders: Whether to render and save RGB/depth images
+    """
+    from src.utils.save_utils import save_gs_ply
+    
+    output_dir = Path(output_dir)
+    incremental_dir = output_dir / "incremental_splats"
+    incremental_dir.mkdir(parents=True, exist_ok=True)
+    
+    device = next(iter([v for v in splats.values() if isinstance(v, torch.Tensor) and v.numel() > 0])).device
+    
+    # Extract view mapping (should be list of [N] tensors, one per batch)
+    view_mapping = splats.get("view_mapping", None)
+    if view_mapping is None:
+        print("⚠️ No view_mapping in splats; skipping incremental saving")
+        return
+    
+    # Assume batch size 1 for simplicity
+    B = len(view_mapping) if isinstance(view_mapping, list) else 1
+    if B != 1:
+        print(f"⚠️ Incremental saving assumes B=1; got B={B}, processing first batch only")
+    
+    view_map_b = view_mapping[0] if isinstance(view_mapping, list) else view_mapping[0]
+    num_views = int(view_map_b.max().item()) + 1
+    
+    print(f"\n📊 Incremental splat saving for {num_views} views")
+    
+    # For each ending view index
+    for end_view in range(1, num_views):  # start from view 1 (so we have views 0..1)
+        print(f"\n  🔄 Processing views 0..{end_view} ({end_view + 1} views total)")
+        
+        # Filter splats for views 0..end_view
+        mask = view_map_b <= end_view
+        filtered_splats = {}
+        
+        for key in ["means", "quats", "scales", "opacities", "sh"]:
+            if key in splats:
+                splat_entry = splats[key]
+                if isinstance(splat_entry, list):
+                    # List format from prune_gs: take first batch, filter by mask
+                    filtered_splats[key] = splat_entry[0][mask]
+                else:
+                    # Tensor format: [B, N, ...], take first batch
+                    filtered_splats[key] = splat_entry[0][mask]
+        
+        # Save PLY
+        if save_ply:
+            ply_path = incremental_dir / f"splats_views_0to{end_view}.ply"
+            means = filtered_splats["means"].reshape(-1, 3)
+            scales = filtered_splats["scales"].reshape(-1, 3)
+            quats = filtered_splats["quats"].reshape(-1, 4)
+            colors = filtered_splats["sh"].reshape(-1, 3) if "sh" in filtered_splats else torch.ones_like(means)
+            opacities = filtered_splats["opacities"].reshape(-1)
+            
+            save_gs_ply(ply_path, means, scales, quats, colors, opacities)
+            print(f"    ✅ Saved {len(means)} splats to {ply_path.name}")
+        
+        # Render from cameras of views 0..end_view
+        if save_renders:
+            renders_dir = incremental_dir / f"renders_views_0to{end_view}"
+            renders_dir.mkdir(exist_ok=True)
+            
+            # Get camera poses/intrinsics for views 0..end_view
+            cam_poses = predictions.get("camera_poses", torch.eye(4, device=device).unsqueeze(0).unsqueeze(0))
+            cam_intrs = predictions.get("camera_intrs", torch.eye(3, device=device).unsqueeze(0).unsqueeze(0))
+            
+            # Slice to views 0..end_view (assuming [B, V, ...] format)
+            if cam_poses.ndim == 4:  # [B, V, 4, 4]
+                cam_poses_subset = cam_poses[0, :end_view+1]
+                cam_intrs_subset = cam_intrs[0, :end_view+1]
+            else:
+                cam_poses_subset = cam_poses
+                cam_intrs_subset = cam_intrs
+            
+            # Render each view
+            for view_idx in range(end_view + 1):
+                try:
+                    # Create minimal rasterize input
+                    viewmats_i = torch.linalg.inv(cam_poses_subset[view_idx:view_idx+1])  # [1, 4, 4]
+                    Ks_i = cam_intrs_subset[view_idx:view_idx+1]  # [1, 3, 3]
+                    
+                    # Prepare splats in batch format for rasterizer
+                    means_batch = filtered_splats["means"].unsqueeze(0)  # [1, N, 3]
+                    quats_batch = filtered_splats["quats"].unsqueeze(0)  # [1, N, 4]
+                    scales_batch = filtered_splats["scales"].unsqueeze(0)  # [1, N, 3]
+                    opacities_batch = filtered_splats["opacities"].unsqueeze(0)  # [1, N]
+                    sh_batch = filtered_splats["sh"].unsqueeze(0)  # [1, N, 3] or similar
+                    
+                    render_colors, render_depths, _ = gs_renderer.rasterizer.rasterize_batches(
+                        means_batch, quats_batch, scales_batch, opacities_batch,
+                        sh_batch, viewmats_i.unsqueeze(0), Ks_i.unsqueeze(0),
+                        width=W, height=H
+                    )
+                    
+                    # Save RGB
+                    rgb = render_colors[0, 0].clamp(0, 1)  # [H, W, 3]
+                    rgb_img = (rgb * 255).to(torch.uint8).cpu().numpy()
+                    
+                    Image.fromarray(rgb_img).save(str(renders_dir / f"render_view_{view_idx:02d}_rgb.png"))
+                    
+                    # Save depth
+                    depth = render_depths[0, 0, :, :, 0].clamp(0, None)  # [H, W]
+                    depth_normalized = (depth - depth.min()) / (depth.max() - depth.min() + 1e-8)
+                    depth_img = (depth_normalized * 255).to(torch.uint8).cpu().numpy()
+                    Image.fromarray(depth_img).save(str(renders_dir / f"render_view_{view_idx:02d}_depth.png"))
+                    
+                    print(f"    ✅ Rendered view {view_idx}")
+                except Exception as e:
+                    print(f"    ⚠️ Failed to render view {view_idx}: {e}")
+            
+            print(f"    ✅ Renders saved to {renders_dir.name}")

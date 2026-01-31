@@ -22,6 +22,7 @@ from src.utils.render_utils import render_interpolated_video
 
 from src.utils.build_pycolmap_recon import build_pycolmap_reconstruction
 from src.models.utils.camera_utils import vector_to_camera_matrices
+from src.utils.render_utils import save_incremental_splats_and_render
 
 # Import mask computation utilities
 from src.utils.geometry import depth_edge, normals_edge
@@ -357,6 +358,19 @@ def main():
             quats,
             colors,
             opacities,
+        )
+
+        # Save incremental splats (views 0-1, 0-2, 0-3, ...) with renders
+        
+        save_incremental_splats_and_render(
+            predictions["splats"],
+            predictions,
+            model.gs_renderer,
+            outdir,
+            H,
+            W,
+            save_ply=True,
+            save_renders=True,
         )
 
         # Render video using the same filtered splats from predictions
