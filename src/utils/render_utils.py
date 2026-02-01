@@ -495,41 +495,37 @@ def save_incremental_splats_and_render(
             
             # Slice to views 0..end_view (assuming [B, V, ...] format)
             if cam_poses.ndim == 4:  # [B, V, 4, 4]
-                cam_poses_subset = cam_poses[0, :end_view+1]
-                cam_intrs_subset = cam_intrs[0, :end_view+1]
+                cam_poses_subset = cam_poses[:, :end_view+1]  # [B, V_subset, 4, 4]
+                cam_intrs_subset = cam_intrs[:, :end_view+1]  # [B, V_subset, 3, 3]
             else:
                 cam_poses_subset = cam_poses
                 cam_intrs_subset = cam_intrs
             
+            # Prepare splats in list format (matching prune_gs output format for rasterize_batches)
+            # Convert from [N] to list of tensors (batch size = 1)
+            means_list = [filtered_splats["means"]]  # List with 1 batch item
+            quats_list = [filtered_splats["quats"]]
+            scales_list = [filtered_splats["scales"]]
+            opacities_list = [filtered_splats["opacities"]]
+            sh_list = [filtered_splats["sh"]]
+            
             # Render each view
             for view_idx in range(end_view + 1):
                 try:
-                    # Create minimal rasterize input
-                    viewmats_i = torch.linalg.inv(cam_poses_subset[view_idx:view_idx+1])  # [1, 4, 4]
-                    Ks_i = cam_intrs_subset[view_idx:view_idx+1]  # [1, 3, 3]
+                    # Extract cameras for this view: [B, 1, 4, 4] and [B, 1, 3, 3]
+                    viewmats_i = torch.linalg.inv(cam_poses_subset[:, view_idx:view_idx+1])
+                    Ks_i = cam_intrs_subset[:, view_idx:view_idx+1]
                     
-                    # Prepare splats in batch format for rasterizer
-                    means_batch = filtered_splats["means"].unsqueeze(0)  # [1, N, 3]
-                    quats_batch = filtered_splats["quats"].unsqueeze(0)  # [1, N, 4]
-                    scales_batch = filtered_splats["scales"].unsqueeze(0)  # [1, N, 3]
-                    opacities_batch = filtered_splats["opacities"].unsqueeze(0)  # [1, N]
-                    sh_batch = filtered_splats["sh"].unsqueeze(0)  # [1, N, ...] 
+                    print(f"    [DEBUG view {view_idx}] means_list[0]: {means_list[0].shape}, viewmats_i: {viewmats_i.shape}, Ks_i: {Ks_i.shape}")
                     
-                    # Handle SH shape: if [1, N, 1, 3] squeeze middle dimension to [1, N, 3]
-                    if sh_batch.ndim == 4 and sh_batch.shape[2] == 1:
-                        sh_batch = sh_batch.squeeze(2)  # [1, N, 3]
-                    
-                    # Debug: print shapes
-                    print(f"    [DEBUG view {view_idx}] means_batch: {means_batch.shape}, quats_batch: {quats_batch.shape}, scales_batch: {scales_batch.shape}, opacities_batch: {opacities_batch.shape}, sh_batch: {sh_batch.shape}")
-                    print(f"    [DEBUG view {view_idx}] viewmats_i: {viewmats_i.shape}, Ks_i: {Ks_i.shape}")
-                    
+                    # Use rasterize_batches with list format (matches main render() usage)
                     render_colors, render_depths, _ = gs_renderer.rasterizer.rasterize_batches(
-                        means_batch, quats_batch, scales_batch, opacities_batch,
-                        sh_batch, viewmats_i.unsqueeze(0), Ks_i.unsqueeze(0),
+                        means_list, quats_list, scales_list, opacities_list,
+                        sh_list, viewmats_i, Ks_i,
                         width=W, height=H
                     )
                     
-                    # Save RGB
+                    # render_colors shape: [B, V, H, W, 3], render_depths: [B, V, H, W, 1]
                     rgb = render_colors[0, 0].clamp(0, 1)  # [H, W, 3]
                     rgb_img = (rgb * 255).to(torch.uint8).cpu().numpy()
                     
