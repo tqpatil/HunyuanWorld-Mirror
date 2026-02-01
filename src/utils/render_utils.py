@@ -513,7 +513,11 @@ def save_incremental_splats_and_render(
                     quats_batch = filtered_splats["quats"].unsqueeze(0)  # [1, N, 4]
                     scales_batch = filtered_splats["scales"].unsqueeze(0)  # [1, N, 3]
                     opacities_batch = filtered_splats["opacities"].unsqueeze(0)  # [1, N]
-                    sh_batch = filtered_splats["sh"].unsqueeze(0)  # [1, N, 3] or similar
+                    sh_batch = filtered_splats["sh"].unsqueeze(0)  # [1, N, ...] 
+                    
+                    # Handle SH shape: if [1, N, 1, 3] squeeze middle dimension to [1, N, 3]
+                    if sh_batch.ndim == 4 and sh_batch.shape[2] == 1:
+                        sh_batch = sh_batch.squeeze(2)  # [1, N, 3]
                     
                     # Debug: print shapes
                     print(f"    [DEBUG view {view_idx}] means_batch: {means_batch.shape}, quats_batch: {quats_batch.shape}, scales_batch: {scales_batch.shape}, opacities_batch: {opacities_batch.shape}, sh_batch: {sh_batch.shape}")
