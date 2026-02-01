@@ -515,6 +515,10 @@ def save_incremental_splats_and_render(
                     opacities_batch = filtered_splats["opacities"].unsqueeze(0)  # [1, N]
                     sh_batch = filtered_splats["sh"].unsqueeze(0)  # [1, N, 3] or similar
                     
+                    # Debug: print shapes
+                    print(f"    [DEBUG view {view_idx}] means_batch: {means_batch.shape}, quats_batch: {quats_batch.shape}, scales_batch: {scales_batch.shape}, opacities_batch: {opacities_batch.shape}, sh_batch: {sh_batch.shape}")
+                    print(f"    [DEBUG view {view_idx}] viewmats_i: {viewmats_i.shape}, Ks_i: {Ks_i.shape}")
+                    
                     render_colors, render_depths, _ = gs_renderer.rasterizer.rasterize_batches(
                         means_batch, quats_batch, scales_batch, opacities_batch,
                         sh_batch, viewmats_i.unsqueeze(0), Ks_i.unsqueeze(0),
@@ -536,5 +540,7 @@ def save_incremental_splats_and_render(
                     print(f"    ✅ Rendered view {view_idx}")
                 except Exception as e:
                     print(f"    ⚠️ Failed to render view {view_idx}: {e}")
+                    import traceback
+                    traceback.print_exc()
             
             print(f"    ✅ Renders saved to {renders_dir.name}")
