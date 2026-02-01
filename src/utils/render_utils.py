@@ -410,7 +410,19 @@ def save_incremental_splats_and_render(
     incremental_dir = output_dir / "incremental_splats"
     incremental_dir.mkdir(parents=True, exist_ok=True)
     
-    device = next(iter([v for v in splats.values() if isinstance(v, torch.Tensor) and v.numel() > 0])).device
+    # Extract device from first available tensor in splats (could be list or tensor format)
+    device = None
+    for v in splats.values():
+        if isinstance(v, torch.Tensor) and v.numel() > 0:
+            device = v.device
+            break
+        elif isinstance(v, list) and len(v) > 0 and isinstance(v[0], torch.Tensor):
+            device = v[0].device
+            break
+    
+    if device is None:
+        print("⚠️ Could not determine device from splats; skipping incremental saving")
+        return
     
     # Extract view mapping (should be list of [N] tensors, one per batch)
     view_mapping = splats.get("view_mapping", None)
@@ -441,19 +453,33 @@ def save_incremental_splats_and_render(
                 splat_entry = splats[key]
                 if isinstance(splat_entry, list):
                     # List format from prune_gs: take first batch, filter by mask
-                    filtered_splats[key] = splat_entry[0][mask]
+                    filtered_splats[key] = splat_entry[0][mask].clone()
+                elif isinstance(splat_entry, torch.Tensor) and splat_entry.ndim >= 2:
+                    # Tensor format: [B, N, ...], take first batch and filter
+                    filtered_splats[key] = splat_entry[0][mask].clone()
                 else:
-                    # Tensor format: [B, N, ...], take first batch
-                    filtered_splats[key] = splat_entry[0][mask]
+                    filtered_splats[key] = splat_entry
         
         # Save PLY
         if save_ply:
             ply_path = incremental_dir / f"splats_views_0to{end_view}.ply"
-            means = filtered_splats["means"].reshape(-1, 3)
-            scales = filtered_splats["scales"].reshape(-1, 3)
-            quats = filtered_splats["quats"].reshape(-1, 4)
-            colors = filtered_splats["sh"].reshape(-1, 3) if "sh" in filtered_splats else torch.ones_like(means)
-            opacities = filtered_splats["opacities"].reshape(-1)
+            means = filtered_splats["means"]
+            scales = filtered_splats["scales"]
+            quats = filtered_splats["quats"]
+            colors = filtered_splats["sh"] if "sh" in filtered_splats else torch.ones_like(means)
+            opacities = filtered_splats["opacities"]
+            
+            # Ensure proper shapes for save_gs_ply
+            if means.ndim > 2:
+                means = means.reshape(-1, 3)
+            if scales.ndim > 2:
+                scales = scales.reshape(-1, 3)
+            if quats.ndim > 2:
+                quats = quats.reshape(-1, 4)
+            if colors.ndim > 2:
+                colors = colors.reshape(-1, 3)
+            if opacities.ndim > 1:
+                opacities = opacities.reshape(-1)
             
             save_gs_ply(ply_path, means, scales, quats, colors, opacities)
             print(f"    ✅ Saved {len(means)} splats to {ply_path.name}")
