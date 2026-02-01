@@ -540,6 +540,11 @@ def save_incremental_splats_and_render(
                     
                     # render_colors shape: [B, V, H, W, 3], render_depths: [B, V, H, W, 1]
                     rgb = render_colors[0, 0].clamp(0, 1)  # [H, W, 3]
+                    # Apply sRGB gamma correction (linear->sRGB) to better match main render outputs
+                    try:
+                        rgb = rgb.pow(1.0 / 2.2)
+                    except Exception:
+                        pass
                     rgb_img = (rgb * 255).to(torch.uint8).cpu().numpy()
                     
                     Image.fromarray(rgb_img).save(str(renders_dir / f"render_view_{view_idx:02d}_rgb.png"))
