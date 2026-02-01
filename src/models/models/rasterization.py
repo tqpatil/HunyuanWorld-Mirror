@@ -189,11 +189,11 @@ class GaussianSplatRenderer(nn.Module):
         
         # 3) Generate splats from gs_params + predictions, and perform voxel merging
         if self.training:
-            splats, mapping = self.prepare_splats(views, predictions, images, gs_params, S, position_from="gsdepth+gtcamera")
+            splats = self.prepare_splats(views, predictions, images, gs_params, S, position_from="gsdepth+gtcamera")
         elif not is_inference:
-            splats, mapping = self.prepare_splats(views, predictions, images, gs_params, S, context_predictions, position_from="gsdepth+predcamera")
+            splats = self.prepare_splats(views, predictions, images, gs_params, S, context_predictions, position_from="gsdepth+predcamera")
         else:
-            splats, mapping = self.prepare_splats(views, predictions, images, gs_params, S, position_from="gsdepth+predcamera")
+            splats = self.prepare_splats(views, predictions, images, gs_params, S, position_from="gsdepth+predcamera")
 
         # Apply confidence filtering before pruning
         if self.enable_conf_filter and "gs_depth_conf" in predictions:
