@@ -501,13 +501,13 @@ def save_incremental_splats_and_render(
                 cam_poses_subset = cam_poses
                 cam_intrs_subset = cam_intrs
             
-            # Prepare splats in list format (matching prune_gs output format for rasterize_batches)
-            # Convert from [N] to list of tensors (batch size = 1)
-            means_list = [filtered_splats["means"]]  # List with 1 batch item
-            quats_list = [filtered_splats["quats"]]
-            scales_list = [filtered_splats["scales"]]
-            opacities_list = [filtered_splats["opacities"]]
-            sh_list = [filtered_splats["sh"]]
+            # Prepare splats with batch dimension (rasterize_batches indexes into batch dim)
+            # filtered_splats has shape [N, ...], we need [B=1, N, ...]
+            means = filtered_splats["means"].unsqueeze(0)  # [1, N, 4]
+            quats = filtered_splats["quats"].unsqueeze(0)  # [1, N, 4]
+            scales = filtered_splats["scales"].unsqueeze(0)  # [1, N, 3]
+            opacities = filtered_splats["opacities"].unsqueeze(0)  # [1, N]
+            sh = filtered_splats["sh"].unsqueeze(0)  # [1, N, num_sh_coeffs, 3]
             
             # Render each view
             for view_idx in range(end_view + 1):
@@ -516,12 +516,12 @@ def save_incremental_splats_and_render(
                     viewmats_i = torch.linalg.inv(cam_poses_subset[:, view_idx:view_idx+1])
                     Ks_i = cam_intrs_subset[:, view_idx:view_idx+1]
                     
-                    print(f"    [DEBUG view {view_idx}] means_list[0]: {means_list[0].shape}, viewmats_i: {viewmats_i.shape}, Ks_i: {Ks_i.shape}")
+                    print(f"    [DEBUG view {view_idx}] means: {means.shape}, viewmats_i: {viewmats_i.shape}, Ks_i: {Ks_i.shape}")
                     
-                    # Use rasterize_batches with list format (matches main render() usage)
+                    # Use rasterize_batches (expects tensors with batch dimension, not lists)
                     render_colors, render_depths, _ = gs_renderer.rasterizer.rasterize_batches(
-                        means_list, quats_list, scales_list, opacities_list,
-                        sh_list, viewmats_i, Ks_i,
+                        means, quats, scales, opacities,
+                        sh, viewmats_i, Ks_i,
                         width=W, height=H
                     )
                     
