@@ -509,6 +509,11 @@ def save_incremental_splats_and_render(
             opacities = filtered_splats["opacities"].unsqueeze(0)  # [1, N]
             sh = filtered_splats["sh"].unsqueeze(0)  # [1, N, num_sh_coeffs, 3]
             
+            # For sh_degree=0, sh has shape [1, N, 1, 3], but rasterize_splats expects [N, 3] per batch
+            # Squeeze the num_sh_coeffs dimension (dimension 2) when it's 1
+            if sh.ndim == 4 and sh.shape[2] == 1:
+                sh = sh.squeeze(2)  # [1, N, 3]
+            
             # Render each view
             for view_idx in range(end_view + 1):
                 try:
