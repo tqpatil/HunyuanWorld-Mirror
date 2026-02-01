@@ -517,11 +517,19 @@ def save_incremental_splats_and_render(
             # Render each view
             for view_idx in range(end_view + 1):
                 try:
-                    # Extract cameras for this view: [B, 1, 4, 4] and [B, 1, 3, 3]
-                    viewmats_i = torch.linalg.inv(cam_poses_subset[:, view_idx:view_idx+1])
-                    Ks_i = cam_intrs_subset[:, view_idx:view_idx+1]
-                    
-                    print(f"    [DEBUG view {view_idx}] means: {means.shape}, viewmats_i: {viewmats_i.shape}, Ks_i: {Ks_i.shape}")
+                    # Extract cameras for this view: use camera-to-world matrices ([B, 1, 4, 4])
+                    # render_interpolated_video passes camtoworlds directly to rasterize_batches,
+                    # which internally computes viewmats = inv(camtoworlds). Do the same here.
+                    viewmats_i = cam_poses_subset[:, view_idx:view_idx+1].to(torch.float32)
+                    Ks_i = cam_intrs_subset[:, view_idx:view_idx+1].to(torch.float32)
+
+                    # Debug: camera translation (camera-to-world) and mean splat center
+                    cam_trans = viewmats_i[0, 0, :3, 3].cpu().numpy() if viewmats_i.numel() else None
+                    try:
+                        splat_center = means[0, :, :3].mean(dim=0).cpu().numpy()
+                    except:
+                        splat_center = None
+                    print(f"    [DEBUG view {view_idx}] means: {means.shape}, cam_trans: {cam_trans}, splat_center: {splat_center}")
                     
                     # Use rasterize_batches (expects tensors with batch dimension, not lists)
                     render_colors, render_depths, _ = gs_renderer.rasterizer.rasterize_batches(
