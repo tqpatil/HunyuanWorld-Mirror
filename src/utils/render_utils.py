@@ -514,50 +514,40 @@ def save_incremental_splats_and_render(
             if sh.ndim == 4 and sh.shape[2] == 1:
                 sh = sh.squeeze(2)  # [1, N, 3]
             
-            # Render each view
-            for view_idx in range(end_view + 1):
-                try:
-                    # Extract cameras for this view: use camera-to-world matrices ([B, 1, 4, 4])
-                    # render_interpolated_video passes camtoworlds directly to rasterize_batches,
-                    # which internally computes viewmats = inv(camtoworlds). Do the same here.
-                    viewmats_i = cam_poses_subset[:, view_idx:view_idx+1].to(torch.float32)
-                    Ks_i = cam_intrs_subset[:, view_idx:view_idx+1].to(torch.float32)
+            # Render all views at once using the same pipeline as `render_interpolated_video`
+            try:
+                # cam_poses_subset and cam_intrs_subset are [B, V_subset, ...]
+                cams_c2w = cam_poses_subset.to(torch.float32)
+                cams_K = cam_intrs_subset.to(torch.float32)
 
-                    # Debug: camera translation (camera-to-world) and mean splat center
-                    cam_trans = viewmats_i[0, 0, :3, 3].cpu().numpy() if viewmats_i.numel() else None
+                colors_arg = sh if "sh" in filtered_splats else filtered_splats.get("colors")
+
+                render_colors, render_depths, _ = gs_renderer.rasterizer.rasterize_batches(
+                    means, quats, scales, opacities,
+                    colors_arg,
+                    cams_c2w, cams_K,
+                    width=W, height=H,
+                    sh_degree=gs_renderer.sh_degree if "sh" in filtered_splats else None,
+                )
+
+                # render_colors: [B, V_subset, H, W, 3]
+                V_out = render_colors.shape[1]
+                for v in range(V_out):
                     try:
-                        splat_center = means[0, :, :3].mean(dim=0).cpu().numpy()
-                    except:
-                        splat_center = None
-                    print(f"    [DEBUG view {view_idx}] means: {means.shape}, cam_trans: {cam_trans}, splat_center: {splat_center}")
-                    
-                    # Use rasterize_batches (expects tensors with batch dimension, not lists)
-                    render_colors, render_depths, _ = gs_renderer.rasterizer.rasterize_batches(
-                        means, quats, scales, opacities,
-                        sh, viewmats_i, Ks_i,
-                        width=W, height=H
-                    )
-                    
-                    # render_colors shape: [B, V, H, W, 3], render_depths: [B, V, H, W, 1]
-                    rgb = render_colors[0, 0].clamp(0, 1)  # [H, W, 3]
-                    # Apply sRGB gamma correction (linear->sRGB) to better match main render outputs
-                    try:
-                        rgb = rgb.pow(1.0 / 2.2)
-                    except Exception:
-                        pass
-                    rgb_img = (rgb * 255).to(torch.uint8).cpu().numpy()
-                    
-                    Image.fromarray(rgb_img).save(str(renders_dir / f"render_view_{view_idx:02d}_rgb.png"))
-                    
-                    # Save depth
-                    depth = render_depths[0, 0, :, :, 0].clamp(0, None)  # [H, W]
-                    depth_normalized = (depth - depth.min()) / (depth.max() - depth.min() + 1e-8)
-                    depth_img = (depth_normalized * 255).to(torch.uint8).cpu().numpy()
-                    Image.fromarray(depth_img).save(str(renders_dir / f"render_view_{view_idx:02d}_depth.png"))
-                    
-                    print(f"    ✅ Rendered view {view_idx}")
-                except Exception as e:
-                    print(f"    ⚠️ Failed to render view {view_idx}: {e}")
+                        rgb = render_colors[0, v].clamp(0, 1)
+                        rgb_img = (rgb * 255).to(torch.uint8).cpu().numpy()
+                        Image.fromarray(rgb_img).save(str(renders_dir / f"render_view_{v:02d}_rgb.png"))
+
+                        depth = render_depths[0, v, :, :, 0].clamp(0, None)
+                        depth_normalized = (depth - depth.min()) / (depth.max() - depth.min() + 1e-8)
+                        depth_img = (depth_normalized * 255).to(torch.uint8).cpu().numpy()
+                        Image.fromarray(depth_img).save(str(renders_dir / f"render_view_{v:02d}_depth.png"))
+
+                        print(f"    ✅ Rendered view {v}")
+                    except Exception as e:
+                        print(f"    ⚠️ Failed to save render for view {v}: {e}")
+            except Exception as e:
+                    print(f"    ⚠️ Failed to render views 0..{end_view}: {e}")
                     import traceback
                     traceback.print_exc()
             
