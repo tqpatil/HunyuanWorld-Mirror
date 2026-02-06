@@ -148,3 +148,161 @@ def video_to_image_frames(input_video_path, save_directory=None, fps=1):
         print(f"Error extracting frames: {str(error)}")
             
     return extracted_frame_paths
+def video_to_image_frames_custom(input_video_path, save_directory=None, n=10):
+    """
+    Extracts exactly n image frames uniformly from a video file and saves them as JPEG format.
+    Always includes the first and last frame.
+    Supports regular video files, webcam captures, WebM files, and GIF files, including incomplete files.
+    
+    Args:
+        input_video_path: Path to the input video file
+        save_directory: Directory to save extracted frames (default: None)
+        n: Total number of frames to extract (n >= 2)
+    
+    Returns: List of file paths to extracted frames
+    """
+    extracted_frame_paths = []
+    
+    # For GIF files, use PIL library for better handling
+    if input_video_path.lower().endswith('.gif'):
+        try:
+            print(f"Processing GIF file using PIL: {input_video_path}")
+            
+            with Image.open(input_video_path) as gif_img:
+                total_frames = gif_img.n_frames
+                print(f"GIF properties: {gif_img.n_frames} frames")
+                
+                # Compute uniform frame indices (always include first and last)
+                if n >= total_frames:
+                    selected_indices = list(range(total_frames))
+                else:
+                    selected_indices = np.linspace(0, total_frames - 1, n, dtype=int).tolist()
+                
+                saved_count = 0
+                for current_frame_index in selected_indices:
+                    gif_img.seek(current_frame_index)
+                    
+                    # Convert to RGB format if necessary
+                    rgb_frame = gif_img.convert('RGB')
+                    
+                    # Convert PIL image to numpy array
+                    frame_ndarray = np.array(rgb_frame)
+                    
+                    # Save frame as JPEG format
+                    frame_output_path = os.path.join(save_directory, f"frame_{saved_count:06d}.jpg")
+                    pil_image = Image.fromarray(frame_ndarray)
+                    pil_image.save(frame_output_path, 'JPEG', quality=95)
+                    extracted_frame_paths.append(frame_output_path)
+                    saved_count += 1
+                
+                if extracted_frame_paths:
+                    print(f"Successfully extracted {len(extracted_frame_paths)} frames from GIF using PIL")
+                    return extracted_frame_paths
+                    
+        except Exception as error:
+            print(f"PIL GIF extraction error: {str(error)}, falling back to OpenCV")
+    
+    # For WebM files, use FFmpeg directly for more stable processing
+    if input_video_path.lower().endswith('.webm'):
+        try:
+            print(f"Processing WebM file using FFmpeg: {input_video_path}")
+            
+            # Create a unique output pattern for the frames
+            output_frame_pattern = os.path.join(save_directory, "frame_%04d.jpg")
+            
+            # Use FFmpeg to extract all frames first
+            ffmpeg_command = [
+                "ffmpeg", 
+                "-i", input_video_path,
+                "-vsync", "0",
+                "-q:v", "2",
+                output_frame_pattern
+            ]
+            
+            # Run FFmpeg process
+            ffmpeg_process = subprocess.Popen(
+                ffmpeg_command, 
+                stdout=subprocess.PIPE, 
+                stderr=subprocess.PIPE
+            )
+            process_stdout, process_stderr = ffmpeg_process.communicate()
+            
+            # Collect all extracted frames
+            all_frames = []
+            for filename in sorted(os.listdir(save_directory)):
+                if filename.startswith("frame_") and filename.endswith(".jpg"):
+                    all_frames.append(os.path.join(save_directory, filename))
+            
+            total_frames = len(all_frames)
+            if total_frames == 0:
+                print("FFmpeg extraction failed, falling back to OpenCV")
+            else:
+                # Compute uniform indices
+                if n >= total_frames:
+                    selected_indices = list(range(total_frames))
+                else:
+                    selected_indices = np.linspace(0, total_frames - 1, n, dtype=int).tolist()
+                
+                for idx in selected_indices:
+                    extracted_frame_paths.append(all_frames[idx])
+                
+                print(f"Successfully extracted {len(extracted_frame_paths)} frames from WebM using FFmpeg")
+                return extracted_frame_paths
+            
+        except Exception as error:
+            print(f"FFmpeg extraction error: {str(error)}, falling back to OpenCV")
+    
+    # Standard OpenCV method for non-WebM files or as fallback
+    try:
+        video_capture = cv2.VideoCapture(input_video_path)
+        
+        # For WebM files, try setting more robust decoder options
+        if input_video_path.lower().endswith('.webm'):
+            video_capture.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'VP80'))
+        
+        total_frames = int(video_capture.get(cv2.CAP_PROP_FRAME_COUNT))
+        if total_frames <= 0:
+            raise RuntimeError("Could not determine total frame count")
+        
+        # Compute uniform frame indices
+        if n >= total_frames:
+            selected_indices = list(range(total_frames))
+        else:
+            selected_indices = np.linspace(0, total_frames - 1, n, dtype=int).tolist()
+        
+        selected_indices_set = set(selected_indices)
+        processed_frame_count = 0
+        
+        # Set error mode to suppress console warnings
+        cv2.setLogLevel(0)
+        
+        saved_count = 0
+        while True:
+            read_success, current_frame = video_capture.read()
+            if not read_success:
+                break
+                
+            if processed_frame_count in selected_indices_set:
+                try:
+                    if current_frame is not None and current_frame.size > 0:
+                        rgb_converted_frame = cv2.cvtColor(current_frame, cv2.COLOR_BGR2RGB)
+                        frame_output_path = os.path.join(save_directory, f"frame_{saved_count:06d}.jpg")
+                        cv2.imwrite(frame_output_path, cv2.cvtColor(rgb_converted_frame, cv2.COLOR_RGB2BGR))
+                        extracted_frame_paths.append(frame_output_path)
+                        saved_count += 1
+                except Exception as error:
+                    print(f"Warning: Failed to process frame {processed_frame_count}: {str(error)}")
+                    
+            processed_frame_count += 1
+            
+            # Safety limit to prevent infinite loops
+            if processed_frame_count > total_frames + 5:
+                break
+                
+        video_capture.release()
+        print(f"Extracted {len(extracted_frame_paths)} frames from video using OpenCV")
+        
+    except Exception as error:
+        print(f"Error extracting frames: {str(error)}")
+            
+    return extracted_frame_paths

@@ -4,7 +4,7 @@ from torchvision import transforms
 
 import glob
 import os
-from src.utils.video_utils import video_to_image_frames
+from src.utils.video_utils import video_to_image_frames_custom
 
 IMAGE_EXTS = ['*.png', '*.jpg', '*.jpeg', '*.bmp', '*.tiff', '*.webp']
 VIDEO_EXTS = ['.mp4', '.avi', '.mov', '.webm', '.gif']
@@ -251,7 +251,7 @@ def prepare_images_to_tensor(file_paths, resize_strategy="crop", target_size=518
 def extract_load_and_preprocess_images(image_folder_or_video_path, fps=1, target_size=518, mode="crop"):
     # Support multiple image formats
     if image_folder_or_video_path.is_file() and image_folder_or_video_path.suffix.lower() in VIDEO_EXTS:
-        frame_paths = video_to_image_frames(str(image_folder_or_video_path), fps=fps)
+        frame_paths = video_to_image_frames_custom(str(image_folder_or_video_path))
         img_paths = sorted(frame_paths)
     else:
         img_paths = []

@@ -12,7 +12,7 @@ import onnxruntime
 
 from src.models.models.worldmirror import WorldMirror
 from src.utils.inference_utils import prepare_images_to_tensor
-from src.utils.video_utils import video_to_image_frames
+from src.utils.video_utils import video_to_image_frames_custom
 from src.models.utils.geometry import depth_to_world_coords_points
 from src.models.utils.geometry import create_pixel_coordinate_grid
 
@@ -179,7 +179,7 @@ def main():
         input_frames_dir = outdir / "input_frames"
         input_frames_dir.mkdir(exist_ok=True)
         
-        img_paths = video_to_image_frames(str(input_path), str(input_frames_dir), fps=args.fps)
+        img_paths = video_to_image_frames_custom(str(input_path), save_directory=str(input_frames_dir))
         if not img_paths:
             raise RuntimeError("❌ Failed to extract frames from video")
 

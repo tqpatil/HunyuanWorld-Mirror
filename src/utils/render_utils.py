@@ -513,8 +513,6 @@ def save_incremental_splats_and_render(
             # Squeeze the num_sh_coeffs dimension (dimension 2) when it's 1
             if sh.ndim == 4 and sh.shape[2] == 1:
                 sh = sh.squeeze(2)  # [1, N, 3]
-            
-            # Render all views at once using the same pipeline as `render_interpolated_video`
             try:
                 # cam_poses_subset and cam_intrs_subset are [B, V_subset, ...]
                 cams_c2w = cam_poses_subset.to(torch.float32)
