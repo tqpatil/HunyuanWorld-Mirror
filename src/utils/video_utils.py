@@ -148,7 +148,7 @@ def video_to_image_frames(input_video_path, save_directory=None, fps=1):
         print(f"Error extracting frames: {str(error)}")
             
     return extracted_frame_paths
-def video_to_image_frames_custom(input_video_path, save_directory=None, n=10):
+def video_to_image_frames_custom(input_video_path, save_directory=None, n=10, return_indices=False):
     """
     Extracts exactly n image frames uniformly from a video file and saves them as JPEG format.
     Always includes the first and last frame.
@@ -158,10 +158,12 @@ def video_to_image_frames_custom(input_video_path, save_directory=None, n=10):
         input_video_path: Path to the input video file
         save_directory: Directory to save extracted frames (default: None)
         n: Total number of frames to extract (n >= 2)
+        return_indices: If True, return (frame_paths, frame_indices) tuple; else just frame_paths
     
-    Returns: List of file paths to extracted frames
+    Returns: List of file paths to extracted frames, or tuple (paths, indices) if return_indices=True
     """
     extracted_frame_paths = []
+    selected_frame_indices = []
     
     # For GIF files, use PIL library for better handling
     if input_video_path.lower().endswith('.gif'):
@@ -193,11 +195,12 @@ def video_to_image_frames_custom(input_video_path, save_directory=None, n=10):
                     pil_image = Image.fromarray(frame_ndarray)
                     pil_image.save(frame_output_path, 'JPEG', quality=95)
                     extracted_frame_paths.append(frame_output_path)
+                    selected_frame_indices.append(current_frame_index)
                     saved_count += 1
                 
                 if extracted_frame_paths:
                     print(f"Successfully extracted {len(extracted_frame_paths)} frames from GIF using PIL")
-                    return extracted_frame_paths
+                    return (extracted_frame_paths, selected_frame_indices) if return_indices else extracted_frame_paths
                     
         except Exception as error:
             print(f"PIL GIF extraction error: {str(error)}, falling back to OpenCV")
@@ -245,9 +248,10 @@ def video_to_image_frames_custom(input_video_path, save_directory=None, n=10):
                 
                 for idx in selected_indices:
                     extracted_frame_paths.append(all_frames[idx])
+                    selected_frame_indices.append(idx)
                 
                 print(f"Successfully extracted {len(extracted_frame_paths)} frames from WebM using FFmpeg")
-                return extracted_frame_paths
+                return (extracted_frame_paths, selected_frame_indices) if return_indices else extracted_frame_paths
             
         except Exception as error:
             print(f"FFmpeg extraction error: {str(error)}, falling back to OpenCV")
@@ -289,6 +293,7 @@ def video_to_image_frames_custom(input_video_path, save_directory=None, n=10):
                         frame_output_path = os.path.join(save_directory, f"frame_{saved_count:06d}.jpg")
                         cv2.imwrite(frame_output_path, cv2.cvtColor(rgb_converted_frame, cv2.COLOR_RGB2BGR))
                         extracted_frame_paths.append(frame_output_path)
+                        selected_frame_indices.append(processed_frame_count)
                         saved_count += 1
                 except Exception as error:
                     print(f"Warning: Failed to process frame {processed_frame_count}: {str(error)}")
@@ -305,4 +310,4 @@ def video_to_image_frames_custom(input_video_path, save_directory=None, n=10):
     except Exception as error:
         print(f"Error extracting frames: {str(error)}")
             
-    return extracted_frame_paths
+    return (extracted_frame_paths, selected_frame_indices) if return_indices else extracted_frame_paths
