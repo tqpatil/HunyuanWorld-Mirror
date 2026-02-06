@@ -503,16 +503,11 @@ def save_incremental_splats_and_render(
             
             # Prepare splats with batch dimension (rasterize_batches indexes into batch dim)
             # filtered_splats has shape [N, ...], we need [B=1, N, ...]
-            means = filtered_splats["means"].unsqueeze(0)  # [1, N, 4]
+            means = filtered_splats["means"].unsqueeze(0)  # [1, N, 3/4]
             quats = filtered_splats["quats"].unsqueeze(0)  # [1, N, 4]
             scales = filtered_splats["scales"].unsqueeze(0)  # [1, N, 3]
             opacities = filtered_splats["opacities"].unsqueeze(0)  # [1, N]
-            sh = filtered_splats["sh"].unsqueeze(0)  # [1, N, num_sh_coeffs, 3]
-            
-            # For sh_degree=0, sh has shape [1, N, 1, 3], but rasterize_splats expects [N, 3] per batch
-            # Squeeze the num_sh_coeffs dimension (dimension 2) when it's 1
-            if sh.ndim == 4 and sh.shape[2] == 1:
-                sh = sh.squeeze(2)  # [1, N, 3]
+            sh = filtered_splats["sh"].unsqueeze(0)  # [1, N, num_sh_coeffs, 3] - keep as-is, rasterizer handles all SH degrees
             try:
                 # cam_poses_subset and cam_intrs_subset are [B, V_subset, ...]
                 cams_c2w = cam_poses_subset.to(torch.float32)
