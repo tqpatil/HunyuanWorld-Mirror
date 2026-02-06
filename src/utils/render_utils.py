@@ -440,6 +440,9 @@ def save_incremental_splats_and_render(
     
     print(f"\n📊 Incremental splat saving for {num_views} views")
     
+    # Track previous splat count so we can print per-increment additions
+    prev_count = 0
+
     # For each ending view index
     for end_view in range(1, num_views):  # start from view 1 (so we have views 0..1)
         print(f"\n  🔄 Processing views 0..{end_view} ({end_view + 1} views total)")
@@ -459,6 +462,21 @@ def save_incremental_splats_and_render(
                     filtered_splats[key] = splat_entry[0][mask].clone()
                 else:
                     filtered_splats[key] = splat_entry
+
+        # Compute and print how many splats were added since the previous increment
+        curr_count = 0
+        if "means" in filtered_splats:
+            try:
+                curr_count = int(filtered_splats["means"].shape[0])
+            except Exception:
+                try:
+                    curr_count = int(len(filtered_splats["means"]))
+                except Exception:
+                    curr_count = 0
+
+        added = curr_count - prev_count
+        print(f"    ℹ️ Views 0..{end_view}: total splats={curr_count}; added since previous={added}")
+        prev_count = curr_count
         
         # Save PLY
         if save_ply:
