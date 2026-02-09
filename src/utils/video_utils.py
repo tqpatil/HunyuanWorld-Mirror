@@ -8,8 +8,9 @@ import cv2
 import numpy as np
 import subprocess
 from PIL import Image
-
-
+import tempfile
+from pathlib import Path
+import pycolmap
 def video_to_image_frames(input_video_path, save_directory=None, fps=1):
     """
     Extracts image frames from a video file at the specified frame rate and saves them as JPEG format.
@@ -311,3 +312,278 @@ def video_to_image_frames_custom(input_video_path, save_directory=None, n=10, re
         print(f"Error extracting frames: {str(error)}")
             
     return (extracted_frame_paths, selected_frame_indices) if return_indices else extracted_frame_paths
+
+
+def select_frames_by_camera_poses(video_path, n=10, output_dir=None, colmap_temp_dir=None):
+    """
+    Select n frames from video using COLMAP camera pose estimation and pose-based constraints.
+    
+    Strategy:
+    - Frame 0: first frame
+    - Frame i (i > 0): furthest frame (in translation) with rotation <= (i+1)*(180/n) degrees from frame 0
+               If no frame satisfies rotation constraint, take the furthest frame anyway
+    - Repeat until n frames are selected
+    
+    Args:
+        video_path: Path to input video file
+        n: Number of frames to select
+        output_dir: Directory to save selected frames (default: same as colmap_temp_dir)
+        colmap_temp_dir: Temporary directory for COLMAP processing (default: creates temp dir)
+    
+    Returns:
+        List of paths to selected frames
+    """
+    
+    
+    
+    # Setup directories
+    if colmap_temp_dir is None:
+        colmap_temp_dir = tempfile.mkdtemp(prefix="colmap_frames_")
+    colmap_temp_dir = Path(colmap_temp_dir)
+    colmap_temp_dir.mkdir(parents=True, exist_ok=True)
+    
+    if output_dir is None:
+        output_dir = colmap_temp_dir
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    frames_dir = colmap_temp_dir / "frames"
+    frames_dir.mkdir(exist_ok=True)
+    
+    print(f"\n📹 Selecting {n} frames from video using COLMAP poses...")
+    print(f"   Temp dir: {colmap_temp_dir}")
+    
+    # Step 1: Extract all frames from video
+    print(f"\n Extracting all frames from video...")
+    all_frame_paths = _extract_all_frames(video_path, str(frames_dir))
+    if not all_frame_paths:
+        print(" Failed to extract frames")
+        return None
+    
+    total_frames = len(all_frame_paths)
+    print(f"  Extracted {total_frames} frames")
+    
+    if total_frames < n:
+        print(f"Video has only {total_frames} frames but {n} requested. Returning all frames.")
+        return all_frame_paths
+    
+    # Step 2: Run COLMAP on frames
+    print(f"\n Running COLMAP to estimate camera poses...")
+    reconstruction = _run_colmap_on_frames(str(frames_dir), colmap_temp_dir)
+    if reconstruction is None:
+        print("COLMAP failed. Falling back to uniform frame selection.")
+        indices = np.linspace(0, total_frames - 1, n, dtype=int)
+        return [all_frame_paths[i] for i in indices]
+    
+    # Step 3: Extract camera poses
+    print(f"\n Extracting camera poses...")
+    poses = _extract_camera_poses(reconstruction, total_frames)
+    if poses is None or len(poses) < n:
+        print(" Could not extract enough valid poses. Falling back to uniform selection.")
+        indices = np.linspace(0, total_frames - 1, n, dtype=int)
+        return [all_frame_paths[i] for i in indices]
+    
+    # Step 4: Select frames based on pose constraints
+    print(f"\n Selecting frames by pose constraints...")
+    selected_indices = _select_frames_by_pose_constraints(poses, n)
+    
+    # Step 5: Copy selected frames to output directory
+    print(f"\n Saving selected frames...")
+    selected_paths = []
+    for out_idx, frame_idx in enumerate(selected_indices):
+        src = Path(all_frame_paths[frame_idx])
+        dst = output_dir / f"frame_{out_idx:06d}.jpg"
+        import shutil
+        shutil.copy2(src, dst)
+        selected_paths.append(str(dst))
+        print(f"   Frame {frame_idx} → {dst.name}")
+    
+    print(f"\n Selected {len(selected_paths)} frames")
+    return selected_paths
+
+
+def _extract_all_frames(video_path, save_dir):
+    """Extract all frames from video and save to directory."""
+    frame_paths = []
+    try:
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            print(f" Cannot open video: {video_path}")
+            return None
+        
+        frame_count = 0
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            
+            frame_path = os.path.join(save_dir, f"frame_{frame_count:06d}.jpg")
+            cv2.imwrite(frame_path, frame)
+            frame_paths.append(frame_path)
+            frame_count += 1
+        
+        cap.release()
+        return frame_paths
+    except Exception as e:
+        print(f" Error extracting frames: {e}")
+        return None
+
+
+def _run_colmap_on_frames(frames_dir, colmap_work_dir):
+    """Run COLMAP SfM pipeline on frames directory."""
+    
+    frames_dir = Path(frames_dir)
+    work_dir = Path(colmap_work_dir)
+    
+    # Create database
+    database_path = work_dir / "database.db"
+    if database_path.exists():
+        database_path.unlink()
+    
+    print(f"   Running feature extraction...")
+    pycolmap.extract_features(
+        database_path,
+        frames_dir,
+        camera_mode=pycolmap.CameraMode.SINGLE,
+    )
+    
+    print(f"   Running feature matching...")
+    pycolmap.match_sequential(
+        database_path,
+        overlap=5,  # Match with 5 adjacent frames
+    )
+    
+    print(f"   Running mapper (SfM)...")
+    maps = pycolmap.incremental_mapper(
+        database_path,
+        frames_dir,
+        work_dir / "sparse",
+    )
+    
+    if not maps:
+        print("COLMAP mapper produced no reconstructions")
+        return None
+    
+    # Return the largest reconstruction
+    return maps[0]
+
+def _extract_camera_poses(reconstruction, total_frames):
+    """
+    Extract camera poses from COLMAP reconstruction.
+    Returns list of 4x4 pose matrices (one per frame) or None if not enough valid poses.
+    """
+    try:
+        poses = {}
+        
+        # Build mapping from image name to pose
+        for image_id, image in reconstruction.images.items():
+            # Image name is like "frame_000000.jpg"
+            img_name = image.name
+            frame_idx = int(img_name.split('_')[1].split('.')[0])
+            
+            if frame_idx < total_frames:
+                # Convert quaternion and position to 4x4 matrix
+                qvec = image.qvec  # [w, x, y, z]
+                tvec = image.tvec  # [x, y, z]
+                
+                # pycolmap quaternion to rotation matrix
+                q = qvec / np.linalg.norm(qvec)
+                w, x, y, z = q
+                
+                R = np.array([
+                    [1 - 2*(y*y + z*z), 2*(x*y - w*z), 2*(x*z + w*y)],
+                    [2*(x*y + w*z), 1 - 2*(x*x + z*z), 2*(y*z - w*x)],
+                    [2*(x*z - w*y), 2*(y*z + w*x), 1 - 2*(x*x + y*y)]
+                ])
+                
+                pose = np.eye(4)
+                pose[:3, :3] = R
+                pose[:3, 3] = tvec
+                poses[frame_idx] = pose
+        
+        if not poses:
+            print(f" No valid poses extracted from COLMAP")
+            return None
+        
+        print(f"  Extracted {len(poses)} valid camera poses")
+        return poses
+    
+    except Exception as e:
+        print(f"Error extracting poses: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
+def _select_frames_by_pose_constraints(poses, n):
+    """
+    Select n frames using pose-based constraints.
+    
+    Algorithm:
+    - Start with frame 0
+    - For each subsequent frame i (1 to n-1):
+        - Rotation threshold: (i+1) * (180/n) degrees
+        - Find frame with max translation from frame 0 that has rotation <= threshold
+        - If no such frame exists, take the frame with max translation overall
+        - Mark selected frame as used
+    """
+    frame_indices = sorted(poses.keys())
+    selected_indices = []
+    remaining_indices = set(frame_indices)
+    
+    # Always start with first frame
+    selected_indices.append(0)
+    remaining_indices.discard(0)
+    
+    ref_pose = poses[0]
+    ref_position = ref_pose[:3, 3]
+    
+    for i in range(1, n):
+        # Rotation threshold for this frame: (i+1) * (180/n) degrees
+        rotation_threshold_deg = (i + 1) * (180.0 / n)
+        rotation_threshold_rad = np.deg2rad(rotation_threshold_deg)
+        
+        # Find frame with max translation within rotation constraint
+        best_idx = None
+        best_dist = -1
+        best_dist_unconstrained = -1
+        best_idx_unconstrained = None
+        
+        for idx in remaining_indices:
+            pose = poses[idx]
+            position = pose[:3, 3]
+            distance = np.linalg.norm(position - ref_position)
+            
+            # Compute rotation angle between ref_pose and pose
+            R_rel = ref_pose[:3, :3].T @ pose[:3, :3]
+            trace = np.trace(R_rel)
+            # Clamp trace to [-1, 1] to avoid numerical issues
+            trace = np.clip(trace, -1, 1)
+            rotation_angle = np.arccos((trace - 1) / 2.0)
+            
+            # Track best unconstrained frame
+            if distance > best_dist_unconstrained:
+                best_dist_unconstrained = distance
+                best_idx_unconstrained = idx
+            
+            # Check if within rotation constraint
+            if rotation_angle <= rotation_threshold_rad:
+                if distance > best_dist:
+                    best_dist = distance
+                    best_idx = idx
+        
+        # Select frame: prefer constrained frame, fall back to unconstrained
+        if best_idx is not None:
+            selected_indices.append(best_idx)
+            remaining_indices.discard(best_idx)
+            print(f"   Frame {i}: selected idx={best_idx} (dist={best_dist:.3f}, rot<{rotation_threshold_deg:.1f}°)")
+        else:
+            selected_indices.append(best_idx_unconstrained)
+            remaining_indices.discard(best_idx_unconstrained)
+            print(f"   Frame {i}: selected idx={best_idx_unconstrained} (dist={best_dist_unconstrained:.3f}, no rot constraint satisfied, threshold was {rotation_threshold_deg:.1f}°)")
+        
+        if len(remaining_indices) == 0:
+            print(f" Ran out of frames; selected {len(selected_indices)} out of {n}")
+            break
+    
+    return selected_indices
