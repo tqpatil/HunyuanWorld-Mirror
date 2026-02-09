@@ -402,8 +402,8 @@ def select_frames_by_camera_poses(video_path, n=10, output_dir=None, colmap_temp
     return selected_paths
 
 
-def _extract_all_frames(video_path, save_dir):
-    """Extract all frames from video and save to directory."""
+def _extract_all_frames(video_path, save_dir, target_width=1280, target_height=720):
+    """Extract all frames from video, downsample to target resolution, and save."""
     frame_paths = []
     try:
         cap = cv2.VideoCapture(video_path)
@@ -411,14 +411,23 @@ def _extract_all_frames(video_path, save_dir):
             print(f" Cannot open video: {video_path}")
             return None
         
+        # Get original resolution
+        orig_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        orig_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        print(f"   Original resolution: {orig_width}x{orig_height}")
+        print(f"   Downsampling to: {target_width}x{target_height}")
+        
         frame_count = 0
         while True:
             ret, frame = cap.read()
             if not ret:
                 break
             
+            # Downsample frame
+            downsampled = cv2.resize(frame, (target_width, target_height), interpolation=cv2.INTER_AREA)
+            
             frame_path = os.path.join(save_dir, f"frame_{frame_count:06d}.jpg")
-            cv2.imwrite(frame_path, frame)
+            cv2.imwrite(frame_path, downsampled)
             frame_paths.append(frame_path)
             frame_count += 1
         
@@ -445,6 +454,7 @@ def _run_colmap_on_frames(frames_dir, colmap_work_dir):
         database_path,
         frames_dir,
         camera_mode=pycolmap.CameraMode.SINGLE,
+        sift_options=pycolmap.SiftExtractionOptions(num_threads=4),
     )
     
     print(f"   Running feature matching...")
