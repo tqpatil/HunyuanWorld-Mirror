@@ -459,15 +459,16 @@ def _run_colmap_on_frames(frames_dir, colmap_work_dir):
     
     print(f"   Running feature matching...")
     pycolmap.match_sequential(
-        database_path,
-        overlap=5,  # Match with 5 adjacent frames
+        str(database_path),
+        matching_options=pycolmap.SequentialMatchingOptions(overlap=5),
     )
+
     
     print(f"   Running mapper (SfM)...")
     maps = pycolmap.incremental_mapper(
-        database_path,
-        frames_dir,
-        work_dir / "sparse",
+        str(database_path),
+        str(frames_dir),
+        str(work_dir / "sparse"),
     )
     
     if not maps:
