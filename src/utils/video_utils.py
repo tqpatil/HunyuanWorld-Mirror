@@ -443,44 +443,48 @@ def _run_colmap_on_frames(frames_dir, colmap_work_dir):
     
     frames_dir = Path(frames_dir)
     work_dir = Path(colmap_work_dir)
-    
+    work_dir.mkdir(parents=True, exist_ok=True)
+
     # Create database
     database_path = work_dir / "database.db"
     if database_path.exists():
         database_path.unlink()
-    
-    print(f"   Running feature extraction...")
+
+    print("   Running feature extraction...")
     pycolmap.extract_features(
-        database_path,
-        frames_dir,
+        database_path=str(database_path),
+        image_dir=str(frames_dir),
         camera_mode=pycolmap.CameraMode.SINGLE,
         sift_options=pycolmap.SiftExtractionOptions(num_threads=4),
     )
 
-    print(f"   Running feature matching...")
+    print("   Running feature matching...")
     pycolmap.match_sequential(
-        str(database_path), 
-        matching_options=pycolmap.SequentialMatchingOptions(
-            overlap=5
-        )
-    )   
-
-
-    
-    print(f"   Running mapper (SfM)...")
-    maps = pycolmap.incremental_mapper(
-        str(database_path),
-        str(frames_dir),
-        str(work_dir / "sparse"),
-        options=pycolmap.IncrementalMapperOptions(num_threads=4)
+        database_path=str(database_path),
+        pairing_options=pycolmap.SequentialPairingOptions(overlap=5),
+        matching_options=pycolmap.FeatureMatchingOptions(num_threads=4),
     )
-    
-    if not maps:
+
+    print("   Running incremental mapping (SfM)...")
+    reconstructions = pycolmap.incremental_mapping(
+        database_path=str(database_path),
+        image_dir=str(frames_dir),
+        output_path=str(work_dir / "sparse_tmp"),  # required internally
+        options=pycolmap.IncrementalPipelineOptions(num_threads=4),
+    )
+
+    if not reconstructions:
         print("COLMAP mapper produced no reconstructions")
         return None
-    
-    # Return the largest reconstruction
-    return maps[0]
+
+    # Return largest reconstruction
+    reconstruction = max(
+        reconstructions,
+        key=lambda r: r.num_registered_images()
+    )
+
+    return reconstruction
+
 
 def _extract_camera_poses(reconstruction, total_frames):
     """
