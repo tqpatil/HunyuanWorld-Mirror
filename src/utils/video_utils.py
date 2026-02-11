@@ -452,8 +452,8 @@ def _run_colmap_on_frames(frames_dir, colmap_work_dir):
 
     print("   Running feature extraction...")
     pycolmap.extract_features(
-        database_path=str(database_path),
-        image_dir=str(frames_dir),
+        str(database_path),
+        str(frames_dir),
         camera_mode=pycolmap.CameraMode.SINGLE,
         sift_options=pycolmap.SiftExtractionOptions(num_threads=4),
     )
