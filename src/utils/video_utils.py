@@ -456,13 +456,12 @@ def _run_colmap_on_frames(frames_dir, colmap_work_dir):
         camera_mode=pycolmap.CameraMode.SINGLE,
         sift_options=pycolmap.SiftExtractionOptions(num_threads=4),
     )
-    
+    pycolmap.set_num_threads(4)
     print(f"   Running feature matching...")
     pycolmap.match_sequential(
         str(database_path), 
         matching_options=pycolmap.SequentialMatchingOptions(
-            overlap=5,
-            num_threads=4
+            overlap=5
         )
     )   
 
