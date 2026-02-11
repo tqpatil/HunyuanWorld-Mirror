@@ -459,9 +459,13 @@ def _run_colmap_on_frames(frames_dir, colmap_work_dir):
     
     print(f"   Running feature matching...")
     pycolmap.match_sequential(
-        str(database_path),
-        matching_options=pycolmap.SequentialMatchingOptions(overlap=5),
-    )
+        str(database_path), 
+        matching_options=pycolmap.SequentialMatchingOptions(
+            overlap=5,
+            num_threads=4
+        )
+    )   
+
 
     
     print(f"   Running mapper (SfM)...")
@@ -469,6 +473,7 @@ def _run_colmap_on_frames(frames_dir, colmap_work_dir):
         str(database_path),
         str(frames_dir),
         str(work_dir / "sparse"),
+        options=pycolmap.IncrementalMapperOptions(num_threads=4)
     )
     
     if not maps:
