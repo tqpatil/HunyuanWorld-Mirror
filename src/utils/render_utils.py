@@ -475,7 +475,7 @@ def save_incremental_splats_and_render(
                     curr_count = 0
 
         added = curr_count - prev_count
-        print(f"    ℹ️ Views 0..{end_view}: total splats={curr_count}; added since previous={added}")
+        print(f"   Views 0..{end_view}: total splats={curr_count}; added since previous={added}")
         prev_count = curr_count
         
         # Save PLY
@@ -525,6 +525,14 @@ def save_incremental_splats_and_render(
             quats = filtered_splats["quats"].unsqueeze(0)  # [1, N, 4]
             scales = filtered_splats["scales"].unsqueeze(0)  # [1, N, 3]
             opacities = filtered_splats["opacities"].unsqueeze(0)  # [1, N]
+            
+            # Scale opacities by number of views to compensate for darkening with few views
+            # This makes early increments (with fewer views) appear brighter
+            num_views_in_increment = end_view + 1
+            opacity_scale_factor = num_views_in_increment / float(num_views)
+            opacities_scaled = opacities * opacity_scale_factor
+            opacities_scaled = torch.clamp(opacities_scaled, 0, 1)  # Clamp to [0, 1]
+            
             sh = filtered_splats["sh"].unsqueeze(0)  # [1, N, num_sh_coeffs, 3] - keep as-is, rasterizer handles all SH degrees
             try:
                 # cam_poses_subset and cam_intrs_subset are [B, V_subset, ...]
@@ -534,7 +542,7 @@ def save_incremental_splats_and_render(
                 colors_arg = sh if "sh" in filtered_splats else filtered_splats.get("colors")
 
                 render_colors, render_depths, _ = gs_renderer.rasterizer.rasterize_batches(
-                    means, quats, scales, opacities,
+                    means, quats, scales, opacities_scaled,
                     colors_arg,
                     cams_c2w, cams_K,
                     width=W, height=H,
