@@ -553,9 +553,8 @@ def _select_frames_by_pose_constraints(poses, n):
     ref_pose = poses[0]
     ref_position = ref_pose[:3, 3]
 
-    # Current position used for translational distance is the last selected frame
-    current_idx = 0
-    current_position = ref_position
+    # Keep list of currently selected positions; used to compute distance to the set
+    selected_positions = [ref_position]
 
     for i in range(1, n):
         # Rotation threshold for this frame: (i+1) * (180/n) degrees
@@ -571,8 +570,9 @@ def _select_frames_by_pose_constraints(poses, n):
         for idx in remaining_indices:
             pose = poses[idx]
             position = pose[:3, 3]
-            # Use distance from current selected frame (not always from ref)
-            distance = np.linalg.norm(position - current_position)
+            # Compute distance to the set of already-selected frames: use minimum distance
+            dists_to_selected = [np.linalg.norm(position - p) for p in selected_positions]
+            distance = float(np.min(dists_to_selected))
 
             # Compute rotation angle between ref_pose (start) and this pose
             R_rel = ref_pose[:3, :3].T @ pose[:3, :3]
@@ -581,7 +581,7 @@ def _select_frames_by_pose_constraints(poses, n):
             trace = np.clip(trace, -1, 1)
             rotation_angle = np.arccos((trace - 1) / 2.0)
 
-            # Track best unconstrained frame (furthest from current)
+            # Track best unconstrained frame (furthest from selected set)
             if distance > best_dist_unconstrained:
                 best_dist_unconstrained = distance
                 best_idx_unconstrained = idx
@@ -598,17 +598,16 @@ def _select_frames_by_pose_constraints(poses, n):
             remaining_indices.discard(best_idx)
             selected_choice = best_idx
             selected_dist = best_dist
-            print(f"   Frame {i}: selected idx={best_idx} (dist_from_current={best_dist:.3f}, rot<{rotation_threshold_deg:.1f}°)")
+            print(f"   Frame {i}: selected idx={best_idx} (dist_to_selected_set={best_dist:.3f}, rot<{rotation_threshold_deg:.1f}°)")
         else:
             selected_indices.append(best_idx_unconstrained)
             remaining_indices.discard(best_idx_unconstrained)
             selected_choice = best_idx_unconstrained
             selected_dist = best_dist_unconstrained
-            print(f"   Frame {i}: selected idx={best_idx_unconstrained} (dist_from_current={best_dist_unconstrained:.3f}, no rot constraint satisfied, threshold was {rotation_threshold_deg:.1f}°)")
+            print(f"   Frame {i}: selected idx={best_idx_unconstrained} (dist_to_selected_set={best_dist_unconstrained:.3f}, no rot constraint satisfied, threshold was {rotation_threshold_deg:.1f}°)")
 
-        # Update current position to the newly selected frame for next iteration
-        current_idx = selected_choice
-        current_position = poses[current_idx][:3, 3]
+        # Add newly selected position to the selected_positions list
+        selected_positions.append(poses[selected_choice][:3, 3])
         
         if len(remaining_indices) == 0:
             print(f" Ran out of frames; selected {len(selected_indices)} out of {n}")
