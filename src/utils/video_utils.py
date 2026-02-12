@@ -478,10 +478,7 @@ def _run_colmap_on_frames(frames_dir, colmap_work_dir):
         return None
 
     # Return largest reconstruction
-    reconstruction = max(
-        reconstructions,
-        key=lambda r: r.num_registered_images()
-    )
+    reconstruction = reconstructions[0].images
 
     return reconstruction
 
