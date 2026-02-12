@@ -468,7 +468,7 @@ def _run_colmap_on_frames(frames_dir, colmap_work_dir):
     print("   Running incremental mapping (SfM)...")
     reconstructions = pycolmap.incremental_mapping(
         database_path=str(database_path),
-        image_dir=str(frames_dir),
+        image_path=str(frames_dir),
         output_path=str(work_dir / "sparse_tmp"),
         options=pycolmap.IncrementalPipelineOptions(num_threads=4),
     )
