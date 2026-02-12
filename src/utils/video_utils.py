@@ -459,17 +459,17 @@ def _run_colmap_on_frames(frames_dir, colmap_work_dir):
     )
 
     print("   Running feature matching...")
-    pycolmap.match_sequential( # revert for next commit 
+    pycolmap.match_sequential(
         database_path=str(database_path),
-        pairing_options=pycolmap.SequentialMatchingOptions(overlap=5),
-        matching_options=pycolmap.SpatialMatchingOptions(num_threads=4),
+        sift_options=pycolmap.SiftMatchingOptions(num_threads=4),
+        matching_options=pycolmap.SequentialMatchingOptions(overlap=5),
     )
 
     print("   Running incremental mapping (SfM)...")
     reconstructions = pycolmap.incremental_mapping(
         database_path=str(database_path),
         image_dir=str(frames_dir),
-        output_path=str(work_dir / "sparse_tmp"),  # required internally
+        output_path=str(work_dir / "sparse_tmp"),
         options=pycolmap.IncrementalPipelineOptions(num_threads=4),
     )
 
@@ -484,7 +484,6 @@ def _run_colmap_on_frames(frames_dir, colmap_work_dir):
     )
 
     return reconstruction
-
 
 def _extract_camera_poses(reconstruction, total_frames):
     """
