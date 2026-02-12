@@ -459,9 +459,9 @@ def _run_colmap_on_frames(frames_dir, colmap_work_dir):
     )
 
     print("   Running feature matching...")
-    pycolmap.match_sequential(
+    pycolmap.match_sequential( # revert for next commit 
         database_path=str(database_path),
-        pairing_options=pycolmap.SequentialPairingOptions(overlap=5),
+        pairing_options=pycolmap.SequentialMatchingOptions(overlap=5),
         matching_options=pycolmap.FeatureMatchingOptions(num_threads=4),
     )
 
