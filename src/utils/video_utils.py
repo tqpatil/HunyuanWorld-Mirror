@@ -602,3 +602,122 @@ def _select_frames_by_pose_constraints(poses, n):
             break
     
     return selected_indices
+
+
+def select_frames_from_dl3dv(dataset_dir, n=10, output_dir=None):
+    """
+    Select n frames from a DL3DV-10K dataset directory using pre-computed COLMAP poses.
+    
+    Structure expected:
+    dataset_dir/
+    ├── transforms.json          (COLMAP camera poses)
+    └── images_4/                (or images/, images_2/, etc.)
+        ├── frame_00001.png
+        ├── frame_00002.png
+        ...
+    
+    Args:
+        dataset_dir: Path to DL3DV dataset directory
+        n: Number of frames to select
+        output_dir: Directory to save selected frames (default: dataset_dir/selected_frames)
+    
+    Returns:
+        List of paths to selected frames (sorted by frame index)
+    """
+    import json
+    
+    dataset_dir = Path(dataset_dir)
+    
+    # Find transforms.json
+    transforms_path = dataset_dir / "transforms.json"
+    if not transforms_path.exists():
+        print(f"❌ transforms.json not found in {dataset_dir}")
+        return None
+    
+    # Find images directory (prefer images_4, then images_2, then images)
+    images_dirs = sorted(dataset_dir.glob("images*"))
+    if not images_dirs:
+        print(f"❌ No images* directory found in {dataset_dir}")
+        return None
+    
+    # Prefer highest resolution: images_4 > images_2 > images
+    images_dir = None
+    for candidate in ["images_4", "images_8", "images"]:
+        candidate_path = dataset_dir / candidate
+        if candidate_path.is_dir():
+            images_dir = candidate_path
+            break
+    
+    if images_dir is None:
+        images_dir = images_dirs[-1]  # Fallback to last (highest number)
+    
+    print(f"\n📁 Using images directory: {images_dir.name}")
+    
+    # Load transforms.json
+    print(f"\n Loading camera poses from transforms.json...")
+    try:
+        with open(transforms_path, 'r') as f:
+            transforms = json.load(f)
+    except Exception as e:
+        print(f"❌ Error loading transforms.json: {e}")
+        return None
+    
+    # Extract camera frames
+    frames_data = transforms.get("frames", [])
+    if not frames_data:
+        print(f"❌ No frames found in transforms.json")
+        return None
+    
+    print(f"   Found {len(frames_data)} frames in transforms.json")
+    
+    # Get all frame paths from images directory
+    all_frame_paths = sorted(images_dir.glob("frame_*.png"))
+    if not all_frame_paths:
+        all_frame_paths = sorted(images_dir.glob("*.png"))
+    
+    if not all_frame_paths:
+        print(f"❌ No PNG files found in {images_dir}")
+        return None
+    
+    print(f"   Found {len(all_frame_paths)} image files")
+    
+    if len(all_frame_paths) < n:
+        print(f"⚠️ Dataset has only {len(all_frame_paths)} frames but {n} requested. Returning all frames.")
+        return all_frame_paths
+    
+    # Extract poses from transforms.json (expected format: list of frames with "transform_matrix")
+    poses = {}
+    for frame_idx, frame_data in enumerate(frames_data):
+        if "transform_matrix" in frame_data:
+            pose_matrix = np.array(frame_data["transform_matrix"], dtype=np.float32)
+            if pose_matrix.shape == (4, 4):
+                poses[frame_idx] = pose_matrix
+    
+    if not poses:
+        print(f"❌ Could not extract valid poses from transforms.json")
+        return None
+    
+    print(f"   ✅ Extracted {len(poses)} valid camera poses")
+    
+    # Select frames using pose constraints
+    print(f"\n Selecting {n} frames by pose constraints...")
+    selected_indices = _select_frames_by_pose_constraints(poses, n)
+    
+    # Copy selected frames to output directory
+    if output_dir is None:
+        output_dir = dataset_dir / "selected_frames"
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    print(f"\n Saving selected frames to {output_dir}...")
+    selected_paths = []
+    for out_idx, frame_idx in enumerate(selected_indices):
+        src = all_frame_paths[frame_idx]
+        dst = output_dir / f"frame_{out_idx:06d}.png"
+        import shutil
+        shutil.copy2(src, dst)
+        selected_paths.append(str(dst))
+        print(f"   Frame {frame_idx} ({src.name}) → {dst.name}")
+    
+    print(f"\n ✅ Selected {len(selected_paths)} frames")
+    return selected_paths

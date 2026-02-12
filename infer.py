@@ -12,7 +12,7 @@ import onnxruntime
 
 from src.models.models.worldmirror import WorldMirror
 from src.utils.inference_utils import prepare_images_to_tensor
-from src.utils.video_utils import select_frames_by_camera_poses
+from src.utils.video_utils import select_frames_by_camera_poses, select_frames_from_dl3dv
 from src.models.utils.geometry import depth_to_world_coords_points
 from src.models.utils.geometry import create_pixel_coordinate_grid
 
@@ -186,15 +186,28 @@ def main():
         print(f"✅ Extracted {len(img_paths)} frames to {input_frames_dir}")
     
     elif input_path.is_dir():
-        # Case 2: Directory of images
-        print(f"📁 Processing directory: {input_path}")
-        img_paths = []
-        for ext in ["*.jpeg", "*.jpg", "*.png", "*.webp"]:
-            img_paths.extend(glob.glob(os.path.join(str(input_path), ext)))
-        if len(img_paths) == 0:
-            raise FileNotFoundError(f"❌ No image files found in {input_path}")
-        img_paths = sorted(img_paths)
-        print(f"✅ Loaded {len(img_paths)} images from {input_path}")
+        # Check if this is a DL3DV-10K dataset (has transforms.json)
+        transforms_path = input_path / "transforms.json"
+        if transforms_path.exists():
+            # Case 2a: DL3DV-10K dataset with transforms.json (precomputed COLMAP poses)
+            print(f"📁 Processing DL3DV dataset: {input_path}")
+            input_frames_dir = outdir / "input_frames"
+            input_frames_dir.mkdir(exist_ok=True)
+            img_paths = select_frames_from_dl3dv(str(input_path), n=10, output_dir=str(input_frames_dir))
+            if not img_paths:
+                raise RuntimeError("❌ Failed to select frames from DL3DV dataset")
+            img_paths = sorted(img_paths)
+            print(f"✅ Selected {len(img_paths)} frames using precomputed COLMAP poses")
+        else:
+            # Case 2b: Regular directory of images
+            print(f"📁 Processing directory: {input_path}")
+            img_paths = []
+            for ext in ["*.jpeg", "*.jpg", "*.png", "*.webp"]:
+                img_paths.extend(glob.glob(os.path.join(str(input_path), ext)))
+            if len(img_paths) == 0:
+                raise FileNotFoundError(f"❌ No image files found in {input_path}")
+            img_paths = sorted(img_paths)
+            print(f"✅ Loaded {len(img_paths)} images from {input_path}")
 
     else:
         raise ValueError(f"❌ Invalid input path: {input_path}")
