@@ -98,7 +98,7 @@ class GaussianSplatRenderer(nn.Module):
         feature_dim: int = 256,       # Output channels of gs_feat_head
         sh_degree: int = 0,
         enable_prune: bool = True,
-        voxel_size: float = 0.002,    # Default voxel size for prune_gs
+        voxel_size: float = 0.0001,    # Default voxel size for prune_gs
         enable_conf_filter: bool = False,  # Enable confidence filtering
         conf_threshold_percent: float = 30.0,  # Confidence threshold percentage
         max_gaussians: int = 5000000,  # Maximum number of Gaussians
@@ -333,7 +333,7 @@ class GaussianSplatRenderer(nn.Module):
 
         return filtered
 
-    def prune_gs(self, splats, voxel_size=0.002):
+    def prune_gs(self, splats, voxel_size=0.002): # modify pruning to assign merged splats to all views involved instead of just one
         """
         Prune Gaussian splats by merging those in the same voxel.
         Reconciles view-to-splat mapping by assigning merged splats to the view
