@@ -178,7 +178,7 @@ def main():
         print(f"📹 Processing video: {input_path}")
         input_frames_dir = outdir / "input_frames"
         input_frames_dir.mkdir(exist_ok=True)
-        img_paths = select_frames_by_camera_poses(str(input_path), n=10, output_dir=str(input_frames_dir))
+        img_paths = select_frames_by_camera_poses(str(input_path), n=15, output_dir=str(input_frames_dir))
         if not img_paths:
             raise RuntimeError("❌ Failed to extract frames from video")
 
