@@ -424,18 +424,21 @@ def save_incremental_splats_and_render(
         print("⚠️ Could not determine device from splats; skipping incremental saving")
         return
     
-    # Extract view mapping (should be list of [N] tensors, one per batch)
+    # Extract view mapping (could be tensor [B, N] from prepare_splats or list [N] per batch from prune_gs)
     view_mapping = splats.get("view_mapping", None)
     if view_mapping is None:
         print("⚠️ No view_mapping in splats; skipping incremental saving")
         return
     
-    # Assume batch size 1 for simplicity
-    B = len(view_mapping) if isinstance(view_mapping, list) else 1
-    if B != 1:
-        print(f"⚠️ Incremental saving assumes B=1; got B={B}, processing first batch only")
+    # Normalize view_mapping to tensor format [B, N] for consistent handling
+    if isinstance(view_mapping, list):
+        # Already a list from prune_gs; convert first batch to tensor
+        view_mapping_tensor = view_mapping[0]
+    else:
+        # It's a tensor [B, N] from prepare_splats
+        view_mapping_tensor = view_mapping[0] if view_mapping.ndim > 1 else view_mapping
     
-    view_map_b = view_mapping[0] if isinstance(view_mapping, list) else view_mapping[0]
+    view_map_b = view_mapping_tensor
     num_views = int(view_map_b.max().item()) + 1
     
     print(f"\n📊 Incremental splat saving for {num_views} views")
@@ -451,7 +454,7 @@ def save_incremental_splats_and_render(
         mask = view_map_b <= end_view
         filtered_splats = {}
         
-        for key in ["means", "quats", "scales", "opacities", "sh"]:
+        for key in ["means", "quats", "scales", "opacities", "sh", "weights"]:
             if key in splats:
                 splat_entry = splats[key]
                 if isinstance(splat_entry, list):
@@ -462,8 +465,32 @@ def save_incremental_splats_and_render(
                     filtered_splats[key] = splat_entry[0][mask].clone()
                 else:
                     filtered_splats[key] = splat_entry
+        
+        # Add view_mapping for this subset
+        filtered_view_mapping = view_map_b[mask].clone()
+        
+        # Prune the filtered subset (merge splats within same voxel for this view range)
+        # Convert to format expected by prune_gs: dict with [B, N, ...] tensors
+        splats_for_prune = {
+            "means": filtered_splats["means"].unsqueeze(0),
+            "quats": filtered_splats["quats"].unsqueeze(0),
+            "scales": filtered_splats["scales"].unsqueeze(0),
+            "opacities": filtered_splats["opacities"].unsqueeze(0),
+            "sh": filtered_splats["sh"].unsqueeze(0),
+            "weights": filtered_splats.get("weights", torch.ones(filtered_splats["means"].shape[0], device=device)).unsqueeze(0),
+            "view_mapping": [filtered_view_mapping]
+        }
+        
+        pruned_splats = gs_renderer.prune_gs(splats_for_prune, voxel_size=gs_renderer.voxel_size)
+        
+        # Extract pruned splats back to unbatched format
+        filtered_splats["means"] = pruned_splats["means"][0]
+        filtered_splats["quats"] = pruned_splats["quats"][0]
+        filtered_splats["scales"] = pruned_splats["scales"][0]
+        filtered_splats["opacities"] = pruned_splats["opacities"][0]
+        filtered_splats["sh"] = pruned_splats["sh"][0]
 
-        # Compute and print how many splats were added since the previous increment
+        # Compute and print how many splats after pruning
         curr_count = 0
         if "means" in filtered_splats:
             try:
@@ -475,7 +502,7 @@ def save_incremental_splats_and_render(
                     curr_count = 0
 
         added = curr_count - prev_count
-        print(f"   Views 0..{end_view}: total splats={curr_count}; added since previous={added}")
+        print(f"   Views 0..{end_view}: total splats={curr_count} (after pruning); added since previous={added}")
         prev_count = curr_count
         
         # Save PLY

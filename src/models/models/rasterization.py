@@ -216,7 +216,8 @@ class GaussianSplatRenderer(nn.Module):
             pre_prune_counts = None
         print(f"[GaussianSplatRenderer] splats before prune: {pre_prune_counts}")
 
-        if self.enable_prune:
+        # During inference, skip global pruning; incremental saving will prune each subset separately
+        if self.enable_prune and not is_inference:
             splats = self.prune_gs(splats, voxel_size=self.voxel_size)
 
             # Log splat counts after pruning
