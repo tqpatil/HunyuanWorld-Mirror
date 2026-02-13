@@ -447,11 +447,11 @@ def save_incremental_splats_and_render(
     for end_view in range(1, num_views):  # start from view 1 (so we have views 0..1)
         print(f"\n  🔄 Processing views 0..{end_view} ({end_view + 1} views total)")
         
-        # Filter splats for views 0..end_view
+        # Filter splats for views 0..end_view (keep original format)
         mask = view_map_b <= end_view
         filtered_splats = {}
         
-        for key in ["means", "quats", "scales", "opacities", "sh"]:
+        for key in ["means", "quats", "scales", "opacities", "sh", "weights"]:
             if key in splats:
                 splat_entry = splats[key]
                 if isinstance(splat_entry, list):
@@ -462,8 +462,34 @@ def save_incremental_splats_and_render(
                     filtered_splats[key] = splat_entry[0][mask].clone()
                 else:
                     filtered_splats[key] = splat_entry
+        
+        # Add view_mapping for this subset
+        filtered_view_mapping = view_map_b[mask].clone()
+        filtered_splats["view_mapping"] = filtered_view_mapping
+        
+        # Prune the filtered subset (merge splats within same voxel for this view range)
+        # Convert to format expected by prune_gs: dict with [B, N, ...] tensors
+        splats_for_prune = {
+            "means": filtered_splats["means"].unsqueeze(0),
+            "quats": filtered_splats["quats"].unsqueeze(0),
+            "scales": filtered_splats["scales"].unsqueeze(0),
+            "opacities": filtered_splats["opacities"].unsqueeze(0),
+            "sh": filtered_splats["sh"].unsqueeze(0),
+            "weights": filtered_splats.get("weights", torch.ones(filtered_splats["means"].shape[0], device=device)).unsqueeze(0),
+            "view_mapping": [filtered_view_mapping]
+        }
+        
+        pruned_splats = gs_renderer.prune_gs(splats_for_prune, voxel_size=gs_renderer.voxel_size)
+        
+        # Extract pruned splats back to unbatched format
+        filtered_splats["means"] = pruned_splats["means"][0]
+        filtered_splats["quats"] = pruned_splats["quats"][0]
+        filtered_splats["scales"] = pruned_splats["scales"][0]
+        filtered_splats["opacities"] = pruned_splats["opacities"][0]
+        filtered_splats["sh"] = pruned_splats["sh"][0]
+        filtered_splats["view_mapping"] = pruned_splats.get("view_mapping", [filtered_view_mapping])[0]
 
-        # Compute and print how many splats were added since the previous increment
+        # Compute and print how many splats after pruning
         curr_count = 0
         if "means" in filtered_splats:
             try:
@@ -475,7 +501,7 @@ def save_incremental_splats_and_render(
                     curr_count = 0
 
         added = curr_count - prev_count
-        print(f"   Views 0..{end_view}: total splats={curr_count}; added since previous={added}")
+        print(f"   Views 0..{end_view}: total splats={curr_count} (after pruning); added since previous={added}")
         prev_count = curr_count
         
         # Save PLY
