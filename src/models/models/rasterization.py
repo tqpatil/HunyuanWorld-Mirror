@@ -199,41 +199,22 @@ class GaussianSplatRenderer(nn.Module):
         if self.enable_conf_filter and "gs_depth_conf" in predictions:
             splats = self.apply_confidence_filter(splats, predictions["gs_depth_conf"])
 
-        # Log splat counts before pruning
+        # Log splat counts
         try:
             means_entry = splats.get("means", None)
             if isinstance(means_entry, list):
-                pre_prune_counts = [int(m.shape[0]) for m in means_entry]
+                splat_counts = [int(m.shape[0]) for m in means_entry]
             elif isinstance(means_entry, torch.Tensor):
                 # expected shape [B, N, 3]
                 if means_entry.ndim >= 2:
-                    pre_prune_counts = [int(means_entry.shape[1])]
+                    splat_counts = [int(means_entry.shape[1])]
                 else:
-                    pre_prune_counts = [int(means_entry.shape[0])]
+                    splat_counts = [int(means_entry.shape[0])]
             else:
-                pre_prune_counts = None
+                splat_counts = None
         except Exception:
-            pre_prune_counts = None
-        print(f"[GaussianSplatRenderer] splats before prune: {pre_prune_counts}")
-
-        if self.enable_prune:
-            splats = self.prune_gs(splats, voxel_size=self.voxel_size)
-
-            # Log splat counts after pruning
-            try:
-                means_entry = splats.get("means", None)
-                if isinstance(means_entry, list):
-                    post_prune_counts = [int(m.shape[0]) for m in means_entry]
-                elif isinstance(means_entry, torch.Tensor):
-                    if means_entry.ndim >= 2:
-                        post_prune_counts = [int(means_entry.shape[1])]
-                    else:
-                        post_prune_counts = [int(means_entry.shape[0])]
-                else:
-                    post_prune_counts = None
-            except Exception:
-                post_prune_counts = None
-            print(f"[GaussianSplatRenderer] splats after prune: {post_prune_counts}")
+            splat_counts = None
+        print(f"[GaussianSplatRenderer] splats total (no pruning): {splat_counts}")
         
         predictions["splats"] = splats
         if is_inference:

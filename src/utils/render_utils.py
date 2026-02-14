@@ -508,14 +508,17 @@ def save_incremental_splats_and_render(
         prev_pruned_splats = {k: v.clone() if isinstance(v, torch.Tensor) else v 
                                for k, v in filtered_splats.items()}
         
+        # Prune the filtered subset
+        pruned_for_save = gs_renderer.prune_gs(filtered_splats, voxel_size=gs_renderer.voxel_size)
+        
         # Save PLY
         if save_ply:
             ply_path = incremental_dir / f"splats_views_0to{end_view}.ply"
-            means = filtered_splats["means"]
-            scales = filtered_splats["scales"]
-            quats = filtered_splats["quats"]
-            colors = filtered_splats["sh"] if "sh" in filtered_splats else torch.ones_like(means)
-            opacities = filtered_splats["opacities"]
+            means = pruned_for_save["means"]
+            scales = pruned_for_save["scales"]
+            quats = pruned_for_save["quats"]
+            colors = pruned_for_save["sh"] if "sh" in pruned_for_save else torch.ones_like(means)
+            opacities = pruned_for_save["opacities"]
             
             # Ensure proper shapes for save_gs_ply
             if means.ndim > 2:
@@ -530,7 +533,7 @@ def save_incremental_splats_and_render(
                 opacities = opacities.reshape(-1)
             
             save_gs_ply(ply_path, means, scales, quats, colors, opacities)
-            print(f"    ✅ Saved {len(means)} splats to {ply_path.name}")
+            print(f"    ✅ Saved {len(means)} splats (pruned) to {ply_path.name}")
         
         # Save delta PLY (newly added splats only)
         if save_ply and delta_splats is not None and len(delta_splats.get("means", [])) > 0:
@@ -561,6 +564,9 @@ def save_incremental_splats_and_render(
             renders_dir = incremental_dir / f"renders_views_0to{end_view}"
             renders_dir.mkdir(exist_ok=True)
             
+            # Prune the filtered subset before rendering
+            pruned_splats = gs_renderer.prune_gs(filtered_splats, voxel_size=gs_renderer.voxel_size)
+            
             # Get camera poses/intrinsics for views 0..end_view
             cam_poses = predictions.get("camera_poses", torch.eye(4, device=device).unsqueeze(0).unsqueeze(0))
             cam_intrs = predictions.get("camera_intrs", torch.eye(3, device=device).unsqueeze(0).unsqueeze(0))
@@ -573,26 +579,26 @@ def save_incremental_splats_and_render(
                 cam_poses_subset = cam_poses
                 cam_intrs_subset = cam_intrs
             
-            # Prepare splats with batch dimension (rasterize_batches indexes into batch dim)
-            # filtered_splats has shape [N, ...], we need [B=1, N, ...]
-            means = filtered_splats["means"].unsqueeze(0)  # [1, N, 3/4]
-            quats = filtered_splats["quats"].unsqueeze(0)  # [1, N, 4]
-            scales = filtered_splats["scales"].unsqueeze(0)  # [1, N, 3]
-            opacities = filtered_splats["opacities"].unsqueeze(0)  # [1, N]
-            sh = filtered_splats["sh"].unsqueeze(0)  # [1, N, num_sh_coeffs, 3] - keep as-is, rasterizer handles all SH degrees
+            # Prepare pruned splats with batch dimension (rasterize_batches indexes into batch dim)
+            # pruned_splats has shape [N, ...], we need [B=1, N, ...]
+            means = pruned_splats["means"].unsqueeze(0) if pruned_splats["means"].ndim == 2 else pruned_splats["means"]  # [1, N, 3/4]
+            quats = pruned_splats["quats"].unsqueeze(0) if pruned_splats["quats"].ndim == 1 else pruned_splats["quats"]  # [1, N, 4]
+            scales = pruned_splats["scales"].unsqueeze(0) if pruned_splats["scales"].ndim == 2 else pruned_splats["scales"]  # [1, N, 3]
+            opacities = pruned_splats["opacities"].unsqueeze(0) if pruned_splats["opacities"].ndim == 1 else pruned_splats["opacities"]  # [1, N]
+            sh = pruned_splats["sh"].unsqueeze(0) if pruned_splats["sh"].ndim == 3 else pruned_splats["sh"]  # [1, N, num_sh_coeffs, 3]
             try:
                 # cam_poses_subset and cam_intrs_subset are [B, V_subset, ...]
                 cams_c2w = cam_poses_subset.to(torch.float32)
                 cams_K = cam_intrs_subset.to(torch.float32)
 
-                colors_arg = sh if "sh" in filtered_splats else filtered_splats.get("colors")
+                colors_arg = sh if "sh" in pruned_splats else pruned_splats.get("colors")
 
                 render_colors, render_depths, _ = gs_renderer.rasterizer.rasterize_batches(
                     means, quats, scales, opacities,
                     colors_arg,
                     cams_c2w, cams_K,
                     width=W, height=H,
-                    sh_degree=gs_renderer.sh_degree if "sh" in filtered_splats else None,
+                    sh_degree=gs_renderer.sh_degree if "sh" in pruned_splats else None,
                 )
 
                 # render_colors: [B, V_subset, H, W, 3]
