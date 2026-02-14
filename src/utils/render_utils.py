@@ -455,7 +455,7 @@ def save_incremental_splats_and_render(
         mask = view_map_b <= end_view
         filtered_splats = {}
         
-        for key in ["means", "quats", "scales", "opacities", "sh"]:
+        for key in ["means", "quats", "scales", "opacities", "sh", "weights", "view_mapping"]:
             if key in splats:
                 splat_entry = splats[key]
                 if isinstance(splat_entry, list):
@@ -493,7 +493,7 @@ def save_incremental_splats_and_render(
             mask_delta = mask_curr & ~mask_prev  # New splats in this increment
             
             delta_splats = {}
-            for key in ["means", "quats", "scales", "opacities", "sh"]:
+            for key in ["means", "quats", "scales", "opacities", "sh", "weights", "view_mapping"]:
                 if key in filtered_splats:
                     # Note: We use original (unpruned) splats for delta to show exact additions
                     splat_entry = splats[key]
