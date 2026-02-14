@@ -443,8 +443,9 @@ def save_incremental_splats_and_render(
     
     print(f"\n📊 Incremental splat saving for {num_views} views")
     
-    # Track previous splat count so we can print per-increment additions
+    # Track previous splat count and pruned splats for delta computation
     prev_count = 0
+    prev_pruned_splats = None  # Will store the pruned splats from previous iteration
 
     # For each ending view index
     for end_view in range(1, num_views):  # start from view 1 (so we have views 0..1)
@@ -503,7 +504,31 @@ def save_incremental_splats_and_render(
 
         added = curr_count - prev_count
         print(f"   Views 0..{end_view}: total splats={curr_count} (after pruning); added since previous={added}")
+        
+        # Compute delta splats (only newly added between this and previous iteration)
+        delta_splats = None
+        if end_view > 1 and prev_pruned_splats is not None and added > 0:
+            # Extract the newly added splats by filtering to only those not in previous set
+            # Since pruning can change indices, we identify new splats by using the original masks
+            mask_prev = view_map_b <= (end_view - 1)
+            mask_curr = view_map_b <= end_view
+            mask_delta = mask_curr & ~mask_prev  # New splats in this increment
+            
+            delta_splats = {}
+            for key in ["means", "quats", "scales", "opacities", "sh"]:
+                if key in filtered_splats:
+                    # Note: We use original (unpruned) splats for delta to show exact additions
+                    splat_entry = splats[key]
+                    if isinstance(splat_entry, list):
+                        delta_splats[key] = splat_entry[0][mask_delta].clone()
+                    elif isinstance(splat_entry, torch.Tensor) and splat_entry.ndim >= 2:
+                        delta_splats[key] = splat_entry[0][mask_delta].clone()
+                    else:
+                        delta_splats[key] = splat_entry
+        
         prev_count = curr_count
+        prev_pruned_splats = {k: v.clone() if isinstance(v, torch.Tensor) else v 
+                               for k, v in filtered_splats.items()}
         
         # Save PLY
         if save_ply:
@@ -528,6 +553,30 @@ def save_incremental_splats_and_render(
             
             save_gs_ply(ply_path, means, scales, quats, colors, opacities)
             print(f"    ✅ Saved {len(means)} splats to {ply_path.name}")
+        
+        # Save delta PLY (newly added splats only)
+        if save_ply and delta_splats is not None and len(delta_splats.get("means", [])) > 0:
+            ply_path_delta = incremental_dir / f"splats_delta_{end_view - 1}to{end_view}.ply"
+            means_delta = delta_splats["means"]
+            scales_delta = delta_splats["scales"]
+            quats_delta = delta_splats["quats"]
+            colors_delta = delta_splats["sh"] if "sh" in delta_splats else torch.ones_like(means_delta)
+            opacities_delta = delta_splats["opacities"]
+            
+            # Ensure proper shapes
+            if means_delta.ndim > 2:
+                means_delta = means_delta.reshape(-1, 3)
+            if scales_delta.ndim > 2:
+                scales_delta = scales_delta.reshape(-1, 3)
+            if quats_delta.ndim > 2:
+                quats_delta = quats_delta.reshape(-1, 4)
+            if colors_delta.ndim > 2:
+                colors_delta = colors_delta.reshape(-1, 3)
+            if opacities_delta.ndim > 1:
+                opacities_delta = opacities_delta.reshape(-1)
+            
+            save_gs_ply(ply_path_delta, means_delta, scales_delta, quats_delta, colors_delta, opacities_delta)
+            print(f"    ✅ Saved {len(means_delta)} delta splats to {ply_path_delta.name}")
         
         # Render from cameras of views 0..end_view
         if save_renders:
