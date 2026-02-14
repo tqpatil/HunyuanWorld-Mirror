@@ -98,7 +98,7 @@ class GaussianSplatRenderer(nn.Module):
         feature_dim: int = 256,       # Output channels of gs_feat_head
         sh_degree: int = 0,
         enable_prune: bool = True,
-        voxel_size: float = 0.01,    # Default voxel size for prune_gs
+        voxel_size: float = 0.002,    # Default voxel size for prune_gs
         enable_conf_filter: bool = False,  # Enable confidence filtering
         conf_threshold_percent: float = 30.0,  # Confidence threshold percentage
         max_gaussians: int = 5000000,  # Maximum number of Gaussians
@@ -216,8 +216,7 @@ class GaussianSplatRenderer(nn.Module):
             pre_prune_counts = None
         print(f"[GaussianSplatRenderer] splats before prune: {pre_prune_counts}")
 
-        # During inference, skip global pruning; incremental saving will prune each subset separately
-        if self.enable_prune and not is_inference:
+        if self.enable_prune:
             splats = self.prune_gs(splats, voxel_size=self.voxel_size)
 
             # Log splat counts after pruning
