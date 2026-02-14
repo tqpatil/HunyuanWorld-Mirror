@@ -508,8 +508,20 @@ def save_incremental_splats_and_render(
         prev_pruned_splats = {k: v.clone() if isinstance(v, torch.Tensor) else v 
                                for k, v in filtered_splats.items()}
         
+        # Add batch dimension for prune_gs (expects [B, N, ...] format)
+        filtered_splats_batched = {}
+        for k, v in filtered_splats.items():
+            if isinstance(v, torch.Tensor):
+                filtered_splats_batched[k] = v.unsqueeze(0)  # Add batch dimension: [N, ...] -> [1, N, ...]
+            else:
+                filtered_splats_batched[k] = v
+        
         # Prune the filtered subset
-        pruned_for_save = gs_renderer.prune_gs(filtered_splats, voxel_size=gs_renderer.voxel_size)
+        pruned_for_save = gs_renderer.prune_gs(filtered_splats_batched, voxel_size=gs_renderer.voxel_size)
+        
+        # Remove batch dimension from result (prune_gs returns [1, N_pruned, ...])
+        pruned_for_save = {k: v.squeeze(0) if isinstance(v, torch.Tensor) and v.ndim > 0 else v 
+                           for k, v in pruned_for_save.items()}
         
         # Save PLY
         if save_ply:
@@ -564,8 +576,20 @@ def save_incremental_splats_and_render(
             renders_dir = incremental_dir / f"renders_views_0to{end_view}"
             renders_dir.mkdir(exist_ok=True)
             
+            # Add batch dimension for prune_gs (expects [B, N, ...] format)
+            filtered_splats_batched_render = {}
+            for k, v in filtered_splats.items():
+                if isinstance(v, torch.Tensor):
+                    filtered_splats_batched_render[k] = v.unsqueeze(0)  # Add batch dimension
+                else:
+                    filtered_splats_batched_render[k] = v
+            
             # Prune the filtered subset before rendering
-            pruned_splats = gs_renderer.prune_gs(filtered_splats, voxel_size=gs_renderer.voxel_size)
+            pruned_splats = gs_renderer.prune_gs(filtered_splats_batched_render, voxel_size=gs_renderer.voxel_size)
+            
+            # Remove batch dimension from result
+            pruned_splats = {k: v.squeeze(0) if isinstance(v, torch.Tensor) and v.ndim > 0 else v 
+                            for k, v in pruned_splats.items()}
             
             # Get camera poses/intrinsics for views 0..end_view
             cam_poses = predictions.get("camera_poses", torch.eye(4, device=device).unsqueeze(0).unsqueeze(0))
