@@ -606,9 +606,9 @@ def save_incremental_splats_and_render(
                 cam_intrs_subset = cam_intrs
             
             # Prepare pruned splats with batch dimension (rasterize_batches indexes into batch dim)
-            # pruned_splats has shape [N, ...], we need [B=1, N, ...]
+            # pruned_splats has shape [N, ...] after extraction, we need [B=1, N, ...]
             means = pruned_splats["means"].unsqueeze(0) if pruned_splats["means"].ndim == 2 else pruned_splats["means"]  # [1, N, 3/4]
-            quats = pruned_splats["quats"].unsqueeze(0) if pruned_splats["quats"].ndim == 1 else pruned_splats["quats"]  # [1, N, 4]
+            quats = pruned_splats["quats"].unsqueeze(0) if pruned_splats["quats"].ndim == 2 else pruned_splats["quats"]  # [1, N, 4]
             scales = pruned_splats["scales"].unsqueeze(0) if pruned_splats["scales"].ndim == 2 else pruned_splats["scales"]  # [1, N, 3]
             opacities = pruned_splats["opacities"].unsqueeze(0) if pruned_splats["opacities"].ndim == 1 else pruned_splats["opacities"]  # [1, N]
             sh = pruned_splats["sh"].unsqueeze(0) if pruned_splats["sh"].ndim == 3 else pruned_splats["sh"]  # [1, N, num_sh_coeffs, 3]
