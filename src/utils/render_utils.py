@@ -455,7 +455,7 @@ def save_incremental_splats_and_render(
         mask = view_map_b <= end_view
         filtered_splats = {}
         
-        for key in ["means", "quats", "scales", "opacities", "sh", "weights"]:
+        for key in ["means", "quats", "scales", "opacities", "sh"]:
             if key in splats:
                 splat_entry = splats[key]
                 if isinstance(splat_entry, list):
@@ -467,29 +467,7 @@ def save_incremental_splats_and_render(
                 else:
                     filtered_splats[key] = splat_entry
         
-        # Add view_mapping for this subset
-        filtered_view_mapping = view_map_b[mask].clone()
-        
-        # Prune the filtered subset (merge splats within same voxel for this view range)
-        # Convert to format expected by prune_gs: dict with [B, N, ...] tensors
-        splats_for_prune = {
-            "means": filtered_splats["means"].unsqueeze(0),
-            "quats": filtered_splats["quats"].unsqueeze(0),
-            "scales": filtered_splats["scales"].unsqueeze(0),
-            "opacities": filtered_splats["opacities"].unsqueeze(0),
-            "sh": filtered_splats["sh"].unsqueeze(0),
-            "weights": filtered_splats.get("weights", torch.ones(filtered_splats["means"].shape[0], device=device)).unsqueeze(0),
-            "view_mapping": [filtered_view_mapping]
-        }
-        
-        pruned_splats = gs_renderer.prune_gs(splats_for_prune, voxel_size=gs_renderer.voxel_size)
-        
-        # Extract pruned splats back to unbatched format
-        filtered_splats["means"] = pruned_splats["means"][0]
-        filtered_splats["quats"] = pruned_splats["quats"][0]
-        filtered_splats["scales"] = pruned_splats["scales"][0]
-        filtered_splats["opacities"] = pruned_splats["opacities"][0]
-        filtered_splats["sh"] = pruned_splats["sh"][0]
+
 
         # Compute and print how many splats after pruning
         curr_count = 0
@@ -503,7 +481,7 @@ def save_incremental_splats_and_render(
                     curr_count = 0
 
         added = curr_count - prev_count
-        print(f"   Views 0..{end_view}: total splats={curr_count} (after pruning); added since previous={added}")
+        print(f"   Views 0..{end_view}: total splats={curr_count}; added since previous={added}")
         
         # Compute delta splats (only newly added between this and previous iteration)
         delta_splats = None
