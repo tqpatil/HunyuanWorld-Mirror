@@ -519,8 +519,9 @@ def save_incremental_splats_and_render(
         # Prune the filtered subset
         pruned_for_save = gs_renderer.prune_gs(filtered_splats_batched, voxel_size=gs_renderer.voxel_size)
         
-        # Remove batch dimension from result (prune_gs returns [1, N_pruned, ...])
-        pruned_for_save = {k: v.squeeze(0) if isinstance(v, torch.Tensor) and v.ndim > 0 else v 
+        # Extract from list format returned by prune_gs and remove batch dimension
+        # prune_gs returns {"means": [tensor], ...}, we want just {"means": tensor, ...}
+        pruned_for_save = {k: (v[0] if isinstance(v, list) and len(v) > 0 else v) 
                            for k, v in pruned_for_save.items()}
         
         # Save PLY
@@ -587,8 +588,9 @@ def save_incremental_splats_and_render(
             # Prune the filtered subset before rendering
             pruned_splats = gs_renderer.prune_gs(filtered_splats_batched_render, voxel_size=gs_renderer.voxel_size)
             
-            # Remove batch dimension from result
-            pruned_splats = {k: v.squeeze(0) if isinstance(v, torch.Tensor) and v.ndim > 0 else v 
+            # Extract from list format returned by prune_gs
+            # prune_gs returns {"means": [tensor], ...}, we want just {"means": tensor, ...}
+            pruned_splats = {k: (v[0] if isinstance(v, list) and len(v) > 0 else v) 
                             for k, v in pruned_splats.items()}
             
             # Get camera poses/intrinsics for views 0..end_view
