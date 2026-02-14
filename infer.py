@@ -373,7 +373,7 @@ def main():
         )
 
         # Save incremental splats (views 0-1, 0-2, 0-3, ...) with renders
-        model.gs_renderer.voxel_size = 0.01
+        model.gs_renderer.voxel_size = 0.004
         save_incremental_splats_and_render(
             predictions["splats"],
             predictions,
