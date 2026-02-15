@@ -443,15 +443,15 @@ def save_incremental_splats_and_render(
     
     print(f"\n📊 Incremental splat saving for {num_views} views")
     
-    # Track previous splat count and pruned splats for delta computation
-    prev_count = 0
-    prev_pruned_splats = None  # Will store the pruned splats from previous iteration
+    # Track pruned splats from previous iteration for delta computation
+    prev_pruned_for_save = None
+    prev_pruned_view_multi = None
 
     # For each ending view index
     for end_view in range(1, num_views):  # start from view 1 (so we have views 0..1)
         print(f"\n  🔄 Processing views 0..{end_view} ({end_view + 1} views total)")
         
-        # Filter splats for views 0..end_view
+        # Filter splats for views 0..end_view from original unpruned splats
         mask = view_map_b <= end_view
         filtered_splats = {}
         
@@ -467,48 +467,6 @@ def save_incremental_splats_and_render(
                 else:
                     filtered_splats[key] = splat_entry
         
-
-
-        # Compute and print how many splats after pruning
-        curr_count = 0
-        if "means" in filtered_splats:
-            try:
-                curr_count = int(filtered_splats["means"].shape[0])
-            except Exception:
-                try:
-                    curr_count = int(len(filtered_splats["means"]))
-                except Exception:
-                    curr_count = 0
-
-        added = curr_count - prev_count
-        print(f"   Views 0..{end_view}: total splats={curr_count}; added since previous={added}")
-        
-        # Compute delta splats (only newly added between this and previous iteration)
-        delta_splats = None
-        if end_view > 1 and prev_pruned_splats is not None and added > 0:
-            # Extract the newly added splats by filtering to only those not in previous set
-            # Since pruning can change indices, we identify new splats by using the original masks
-            mask_prev = view_map_b <= (end_view - 1)
-            mask_curr = view_map_b <= end_view
-            mask_delta = mask_curr & ~mask_prev  # New splats in this increment
-            
-            delta_splats = {}
-            for key in ["means", "quats", "scales", "opacities", "sh", "weights", "view_mapping"]:
-                if key in filtered_splats:
-                    # Note: We use original (unpruned) splats for delta to show exact additions
-                    splat_entry = splats[key]
-                    if isinstance(splat_entry, list):
-                        delta_splats[key] = splat_entry[0][mask_delta].clone()
-                    elif isinstance(splat_entry, torch.Tensor) and splat_entry.ndim >= 2:
-                        delta_splats[key] = splat_entry[0][mask_delta].clone()
-                    else:
-                        delta_splats[key] = splat_entry
-        
-        # Update prev_count to reflect unpruned count for now; we'll update to pruned counts below
-        prev_count = curr_count
-        prev_pruned_splats = {k: v.clone() if isinstance(v, torch.Tensor) else v 
-                       for k, v in filtered_splats.items()}
-        
         # Add batch dimension for prune_gs (expects [B, N, ...] format)
         filtered_splats_batched = {}
         for k, v in filtered_splats.items():
@@ -517,16 +475,15 @@ def save_incremental_splats_and_render(
             else:
                 filtered_splats_batched[k] = v
         
-        # Prune the filtered subset
+        # Prune the filtered subset (this is the KEY change: prune each iteration 0..k before delta)
         pruned_for_save = gs_renderer.prune_gs(filtered_splats_batched, voxel_size=gs_renderer.voxel_size)
         
         # Extract from list format returned by prune_gs: prune_gs returns {"means": [tensor], ...}
         pruned_for_save = {k: (v[0] if isinstance(v, list) and len(v) > 0 else v) 
                            for k, v in pruned_for_save.items()}
 
-        # Compute pruned counts and delta based on contributing views (if available)
+        # Get current pruned count and contributor info
         curr_pruned_count = 0
-        added_pruned_count = 0
         pruned_view_multi = pruned_for_save.get("view_mapping_multi", None)
         if "means" in pruned_for_save:
             try:
@@ -534,24 +491,42 @@ def save_incremental_splats_and_render(
             except Exception:
                 curr_pruned_count = 0
 
-        # If prune_gs provides per-merged contributing views (bool matrix K x V),
-        # count how many merged splats involve the newly added view `end_view`.
-        if pruned_view_multi is not None:
-            try:
-                # pruned_view_multi: [K, V_subset]
-                if end_view < pruned_view_multi.shape[1]:
-                    added_pruned_count = int(pruned_view_multi[:, end_view].sum().item())
-                else:
-                    # end_view index not present in this pruned result
-                    added_pruned_count = 0
-            except Exception:
-                added_pruned_count = 0
+        print(f"   Views 0..{end_view}: pruned splats={curr_pruned_count}")
 
-        # Print pruned counts instead of raw unpruned counts
-        print(f"   Views 0..{end_view}: pruned splats={curr_pruned_count}; added (pruned)={added_pruned_count}")
-
-        # Update prev_count to pruned count for next iteration
-        prev_count = curr_pruned_count
+        # Compute delta based on pruned results from previous iteration
+        # Delta includes: (1) splats only in current pruned set, (2) splats that blended with view end_view
+        delta_indices = None
+        if end_view > 0 and prev_pruned_for_save is not None:
+            # Identify delta splats by looking at which merged splats involve the new view end_view
+            if pruned_view_multi is not None:
+                try:
+                    # pruned_view_multi: [K, V_subset] boolean mask
+                    # Get indices of splats that involve end_view
+                    if end_view < pruned_view_multi.shape[1]:
+                        mask_involve_new_view = pruned_view_multi[:, end_view]
+                        # Also get indices of NEW splats (in current but not in previous)
+                        # For now, count how many: current K - prev K
+                        curr_K = pruned_for_save["means"].shape[0]
+                        prev_K = prev_pruned_for_save["means"].shape[0] if prev_pruned_for_save is not None else 0
+                        num_new_splats = max(0, curr_K - prev_K)
+                        
+                        # Delta splats are: all splats that involve new view + new splats at end
+                        # New splats are those added to the merged set, assume they're at the end
+                        # (pruning adds to end of merged list)
+                        delta_mask = mask_involve_new_view.clone()
+                        # Mark last num_new_splats as new (these are splats that didn't exist before)
+                        if num_new_splats > 0:
+                            delta_mask[-num_new_splats:] = True
+                        delta_indices = torch.where(delta_mask)[0]
+                except Exception as e:
+                    print(f"   ⚠️ Error computing delta from pruned contributor info: {e}")
+                    delta_indices = None
+        
+        # Count added splats for logging
+        added_pruned_count = 0
+        if delta_indices is not None:
+            added_pruned_count = len(delta_indices)
+        print(f"      added (from delta): {added_pruned_count} splats")
         
         # Save PLY
         if save_ply:
@@ -577,30 +552,17 @@ def save_incremental_splats_and_render(
             save_gs_ply(ply_path, means, scales, quats, colors, opacities)
             print(f"    ✅ Saved {len(means)} splats (pruned) to {ply_path.name}")
         
-        # Save delta PLY (newly added splats only) based on pruned results
-        if save_ply:
+        # Save delta PLY (splats involving new view + newly merged splats)
+        if save_ply and end_view > 0:
             ply_path_delta = incremental_dir / f"splats_delta_{end_view - 1}to{end_view}.ply"
-            # If prune_gs provided contributing-view mask, use it to select pruned splats that involve end_view
-            if pruned_view_multi is not None and end_view < pruned_view_multi.shape[1]:
-                mask_new = pruned_view_multi[:, end_view]
-                if mask_new.any():
-                    means_delta = pruned_for_save["means"][mask_new]
-                    scales_delta = pruned_for_save["scales"][mask_new]
-                    quats_delta = pruned_for_save["quats"][mask_new]
-                    colors_delta = pruned_for_save["sh"][mask_new] if "sh" in pruned_for_save else torch.ones_like(means_delta)
-                    opacities_delta = pruned_for_save["opacities"][mask_new]
-                else:
-                    means_delta = scales_delta = quats_delta = colors_delta = opacities_delta = None
+            if delta_indices is not None and len(delta_indices) > 0:
+                means_delta = pruned_for_save["means"][delta_indices]
+                scales_delta = pruned_for_save["scales"][delta_indices]
+                quats_delta = pruned_for_save["quats"][delta_indices]
+                colors_delta = pruned_for_save["sh"][delta_indices] if "sh" in pruned_for_save else torch.ones_like(means_delta)
+                opacities_delta = pruned_for_save["opacities"][delta_indices]
             else:
-                # Fallback to original unpruned delta_splats if pruned contributor info isn't available
-                if delta_splats is not None and len(delta_splats.get("means", [])) > 0:
-                    means_delta = delta_splats["means"]
-                    scales_delta = delta_splats["scales"]
-                    quats_delta = delta_splats["quats"]
-                    colors_delta = delta_splats["sh"] if "sh" in delta_splats else torch.ones_like(means_delta)
-                    opacities_delta = delta_splats["opacities"]
-                else:
-                    means_delta = scales_delta = quats_delta = colors_delta = opacities_delta = None
+                means_delta = scales_delta = quats_delta = colors_delta = opacities_delta = None
 
             if means_delta is not None:
                 # Ensure proper shapes
@@ -623,21 +585,8 @@ def save_incremental_splats_and_render(
             renders_dir = incremental_dir / f"renders_views_0to{end_view}"
             renders_dir.mkdir(exist_ok=True)
             
-            # Add batch dimension for prune_gs (expects [B, N, ...] format)
-            filtered_splats_batched_render = {}
-            for k, v in filtered_splats.items():
-                if isinstance(v, torch.Tensor):
-                    filtered_splats_batched_render[k] = v.unsqueeze(0)  # Add batch dimension
-                else:
-                    filtered_splats_batched_render[k] = v
-            
-            # Prune the filtered subset before rendering
-            pruned_splats = gs_renderer.prune_gs(filtered_splats_batched_render, voxel_size=gs_renderer.voxel_size)
-            
-            # Extract from list format returned by prune_gs
-            # prune_gs returns {"means": [tensor], ...}, we want just {"means": tensor, ...}
-            pruned_splats = {k: (v[0] if isinstance(v, list) and len(v) > 0 else v) 
-                            for k, v in pruned_splats.items()}
+            # Reuse pruned_for_save which was already pruned above (avoid re-pruning)
+            pruned_splats = pruned_for_save.copy()
             
             # Get camera poses/intrinsics for views 0..end_view
             cam_poses = predictions.get("camera_poses", torch.eye(4, device=device).unsqueeze(0).unsqueeze(0))
@@ -695,3 +644,7 @@ def save_incremental_splats_and_render(
                     traceback.print_exc()
             
             print(f"    ✅ Renders saved to {renders_dir.name}")
+        
+        # Store pruned results for next iteration delta computation
+        prev_pruned_for_save = pruned_for_save.copy()
+        prev_pruned_view_multi = pruned_view_multi.clone() if pruned_view_multi is not None else None
