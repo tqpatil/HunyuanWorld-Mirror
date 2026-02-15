@@ -504,9 +504,10 @@ def save_incremental_splats_and_render(
                     else:
                         delta_splats[key] = splat_entry
         
+        # Update prev_count to reflect unpruned count for now; we'll update to pruned counts below
         prev_count = curr_count
         prev_pruned_splats = {k: v.clone() if isinstance(v, torch.Tensor) else v 
-                               for k, v in filtered_splats.items()}
+                       for k, v in filtered_splats.items()}
         
         # Add batch dimension for prune_gs (expects [B, N, ...] format)
         filtered_splats_batched = {}
@@ -519,10 +520,38 @@ def save_incremental_splats_and_render(
         # Prune the filtered subset
         pruned_for_save = gs_renderer.prune_gs(filtered_splats_batched, voxel_size=gs_renderer.voxel_size)
         
-        # Extract from list format returned by prune_gs and remove batch dimension
-        # prune_gs returns {"means": [tensor], ...}, we want just {"means": tensor, ...}
+        # Extract from list format returned by prune_gs: prune_gs returns {"means": [tensor], ...}
         pruned_for_save = {k: (v[0] if isinstance(v, list) and len(v) > 0 else v) 
                            for k, v in pruned_for_save.items()}
+
+        # Compute pruned counts and delta based on contributing views (if available)
+        curr_pruned_count = 0
+        added_pruned_count = 0
+        pruned_view_multi = pruned_for_save.get("view_mapping_multi", None)
+        if "means" in pruned_for_save:
+            try:
+                curr_pruned_count = int(pruned_for_save["means"].shape[0])
+            except Exception:
+                curr_pruned_count = 0
+
+        # If prune_gs provides per-merged contributing views (bool matrix K x V),
+        # count how many merged splats involve the newly added view `end_view`.
+        if pruned_view_multi is not None:
+            try:
+                # pruned_view_multi: [K, V_subset]
+                if end_view < pruned_view_multi.shape[1]:
+                    added_pruned_count = int(pruned_view_multi[:, end_view].sum().item())
+                else:
+                    # end_view index not present in this pruned result
+                    added_pruned_count = 0
+            except Exception:
+                added_pruned_count = 0
+
+        # Print pruned counts instead of raw unpruned counts
+        print(f"   Views 0..{end_view}: pruned splats={curr_pruned_count}; added (pruned)={added_pruned_count}")
+
+        # Update prev_count to pruned count for next iteration
+        prev_count = curr_pruned_count
         
         # Save PLY
         if save_ply:
@@ -548,29 +577,46 @@ def save_incremental_splats_and_render(
             save_gs_ply(ply_path, means, scales, quats, colors, opacities)
             print(f"    ✅ Saved {len(means)} splats (pruned) to {ply_path.name}")
         
-        # Save delta PLY (newly added splats only)
-        if save_ply and delta_splats is not None and len(delta_splats.get("means", [])) > 0:
+        # Save delta PLY (newly added splats only) based on pruned results
+        if save_ply:
             ply_path_delta = incremental_dir / f"splats_delta_{end_view - 1}to{end_view}.ply"
-            means_delta = delta_splats["means"]
-            scales_delta = delta_splats["scales"]
-            quats_delta = delta_splats["quats"]
-            colors_delta = delta_splats["sh"] if "sh" in delta_splats else torch.ones_like(means_delta)
-            opacities_delta = delta_splats["opacities"]
-            
-            # Ensure proper shapes
-            if means_delta.ndim > 2:
-                means_delta = means_delta.reshape(-1, 3)
-            if scales_delta.ndim > 2:
-                scales_delta = scales_delta.reshape(-1, 3)
-            if quats_delta.ndim > 2:
-                quats_delta = quats_delta.reshape(-1, 4)
-            if colors_delta.ndim > 2:
-                colors_delta = colors_delta.reshape(-1, 3)
-            if opacities_delta.ndim > 1:
-                opacities_delta = opacities_delta.reshape(-1)
-            
-            save_gs_ply(ply_path_delta, means_delta, scales_delta, quats_delta, colors_delta, opacities_delta)
-            print(f"    ✅ Saved {len(means_delta)} delta splats to {ply_path_delta.name}")
+            # If prune_gs provided contributing-view mask, use it to select pruned splats that involve end_view
+            if pruned_view_multi is not None and end_view < pruned_view_multi.shape[1]:
+                mask_new = pruned_view_multi[:, end_view]
+                if mask_new.any():
+                    means_delta = pruned_for_save["means"][mask_new]
+                    scales_delta = pruned_for_save["scales"][mask_new]
+                    quats_delta = pruned_for_save["quats"][mask_new]
+                    colors_delta = pruned_for_save["sh"][mask_new] if "sh" in pruned_for_save else torch.ones_like(means_delta)
+                    opacities_delta = pruned_for_save["opacities"][mask_new]
+                else:
+                    means_delta = scales_delta = quats_delta = colors_delta = opacities_delta = None
+            else:
+                # Fallback to original unpruned delta_splats if pruned contributor info isn't available
+                if delta_splats is not None and len(delta_splats.get("means", [])) > 0:
+                    means_delta = delta_splats["means"]
+                    scales_delta = delta_splats["scales"]
+                    quats_delta = delta_splats["quats"]
+                    colors_delta = delta_splats["sh"] if "sh" in delta_splats else torch.ones_like(means_delta)
+                    opacities_delta = delta_splats["opacities"]
+                else:
+                    means_delta = scales_delta = quats_delta = colors_delta = opacities_delta = None
+
+            if means_delta is not None:
+                # Ensure proper shapes
+                if means_delta.ndim > 2:
+                    means_delta = means_delta.reshape(-1, 3)
+                if scales_delta is not None and scales_delta.ndim > 2:
+                    scales_delta = scales_delta.reshape(-1, 3)
+                if quats_delta is not None and quats_delta.ndim > 2:
+                    quats_delta = quats_delta.reshape(-1, 4)
+                if colors_delta is not None and colors_delta.ndim > 2:
+                    colors_delta = colors_delta.reshape(-1, 3)
+                if opacities_delta is not None and opacities_delta.ndim > 1:
+                    opacities_delta = opacities_delta.reshape(-1)
+
+                save_gs_ply(ply_path_delta, means_delta, scales_delta, quats_delta, colors_delta, opacities_delta)
+                print(f"    ✅ Saved {len(means_delta)} delta splats to {ply_path_delta.name}")
         
         # Render from cameras of views 0..end_view
         if save_renders:

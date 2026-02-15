@@ -330,6 +330,7 @@ class GaussianSplatRenderer(nn.Module):
         B = splats["means"].shape[0]
         merged_splats_list = []
         merged_view_mapping_list = []
+        merged_view_contributors_list = []
         device = splats["means"].device
         view_mapping = splats.get("view_mapping", None)
 
@@ -416,7 +417,8 @@ class GaussianSplatRenderer(nn.Module):
                 merged_view_mapping = torch.zeros(K, dtype=torch.long, device=device)
                 opacity_per_view = torch.zeros((K, view_mapping_i.max().item() + 1), device=device)
                 
-                # Accumulate opacities per view for each merged splat
+                # Accumulate opacities per view for each merged splat and record contributing views
+                batch_contribs = []
                 for voxel_idx in range(K):
                     # Find all original splats that merged into this voxel
                     mask = inverse_indices == voxel_idx
@@ -426,8 +428,18 @@ class GaussianSplatRenderer(nn.Module):
                     
                     # Sum opacities per view
                     opacity_per_view[voxel_idx].scatter_add_(0, original_views, original_opacities)
+                    
+                    # Record which views contributed to this merged splat
+                    unique_views = torch.unique(original_views)
+                    contrib_mask = torch.zeros(opacity_per_view.shape[1], dtype=torch.bool, device=device)
+                    contrib_mask[unique_views.long()] = True
+                    batch_contribs.append(contrib_mask)
                 
-                # Assign each merged splat to the view with max opacity contribution
+                # Stack per-voxel contributor masks into [K, V] and append once per batch
+                if len(batch_contribs) > 0:
+                    merged_view_contributors_list.append(torch.stack(batch_contribs, dim=0))
+
+                # Assign each merged splat to the view with max opacity contribution (legacy single-view mapping)
                 merged_view_mapping = opacity_per_view.argmax(dim=1)
                 merged_view_mapping_list.append(merged_view_mapping)
             
@@ -441,6 +453,9 @@ class GaussianSplatRenderer(nn.Module):
         # Reorganize view mapping
         if merged_view_mapping_list:
             output["view_mapping"] = merged_view_mapping_list
+        # Also provide per-merged contributors mask: list of tensors [K, V]
+        if merged_view_contributors_list:
+            output["view_mapping_multi"] = merged_view_contributors_list
         
         return output
 
