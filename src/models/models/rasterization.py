@@ -339,7 +339,19 @@ class GaussianSplatRenderer(nn.Module):
             view_mapping_i = view_mapping[i] if view_mapping is not None else None  # [N]
             # Compute voxel indices
             coords = splats_i["means"]
+            # Debug: report coordinate bounds for this batch
+            try:
+                coords_min = coords.min(dim=0)[0]
+                coords_max = coords.max(dim=0)[0]
+            except Exception:
+                coords_min = None
+                coords_max = None
             voxel_indices = (coords / voxel_size).floor().long()
+            # Debug: print counts to help diagnose pruning effectiveness
+            try:
+                N = coords.shape[0]
+            except Exception:
+                N = None
             min_indices = voxel_indices.min(dim=0)[0]
             voxel_indices = voxel_indices - min_indices
             max_dims = voxel_indices.max(dim=0)[0] + 1
@@ -352,6 +364,8 @@ class GaussianSplatRenderer(nn.Module):
             # Find unique voxels and inverse mapping
             unique_voxels, inverse_indices = torch.unique(flat_indices, return_inverse=True)
             K = len(unique_voxels)
+            # Print debug info
+            print(f"prune_gs: batch={i} N_splats={N} unique_voxels={K} voxel_size={voxel_size} bbox_min={coords_min} bbox_max={coords_max}")
 
             # Initialize merged splats
             merged = {
