@@ -421,13 +421,13 @@ def save_incremental_splats_and_render(
             break
     
     if device is None:
-        print("⚠️ Could not determine device from splats; skipping incremental saving")
+        print("Could not determine device from splats; skipping incremental saving")
         return
     
     # Extract view mapping (could be tensor [B, N] from prepare_splats or list [N] per batch from prune_gs)
     view_mapping = splats.get("view_mapping", None)
     if view_mapping is None:
-        print("⚠️ No view_mapping in splats; skipping incremental saving")
+        print("No view_mapping in splats; skipping incremental saving")
         return
     
     # Normalize view_mapping to tensor format [B, N] for consistent handling
@@ -441,7 +441,7 @@ def save_incremental_splats_and_render(
     view_map_b = view_mapping_tensor
     num_views = int(view_map_b.max().item()) + 1
     
-    print(f"\n📊 Incremental splat saving for {num_views} views")
+    print(f"\n Incremental splat saving for {num_views} views")
     
     # Track pruned splats from previous iteration for delta computation
     prev_pruned_for_save = None
@@ -449,7 +449,7 @@ def save_incremental_splats_and_render(
 
     # For each ending view index
     for end_view in range(1, num_views):  # start from view 1 (so we have views 0..1)
-        print(f"\n  🔄 Processing views 0..{end_view} ({end_view + 1} views total)")
+        print(f"\n  Processing views 0..{end_view} ({end_view + 1} views total)")
         
         # Filter splats for views 0..end_view from original unpruned splats
         mask = view_map_b <= end_view
@@ -519,7 +519,7 @@ def save_incremental_splats_and_render(
                             delta_mask[-num_new_splats:] = True
                         delta_indices = torch.where(delta_mask)[0]
                 except Exception as e:
-                    print(f"   ⚠️ Error computing delta from pruned contributor info: {e}")
+                    print(f"Error computing delta from pruned contributor info: {e}")
                     delta_indices = None
         
         # Count added splats for logging
@@ -550,7 +550,7 @@ def save_incremental_splats_and_render(
                 opacities = opacities.reshape(-1)
             
             save_gs_ply(ply_path, means, scales, quats, colors, opacities)
-            print(f"    ✅ Saved {len(means)} splats (pruned) to {ply_path.name}")
+            print(f"    Saved {len(means)} splats (pruned) to {ply_path.name}")
         
         # Save delta PLY (splats involving new view + newly merged splats)
         if save_ply and end_view > 0:
@@ -578,7 +578,7 @@ def save_incremental_splats_and_render(
                     opacities_delta = opacities_delta.reshape(-1)
 
                 save_gs_ply(ply_path_delta, means_delta, scales_delta, quats_delta, colors_delta, opacities_delta)
-                print(f"    ✅ Saved {len(means_delta)} delta splats to {ply_path_delta.name}")
+                print(f"   Saved {len(means_delta)} delta splats to {ply_path_delta.name}")
         
         # Render from cameras of views 0..end_view
         if save_renders:
@@ -635,15 +635,15 @@ def save_incremental_splats_and_render(
                         depth_img = (depth_normalized * 255).to(torch.uint8).cpu().numpy()
                         Image.fromarray(depth_img).save(str(renders_dir / f"render_view_{v:02d}_depth.png"))
 
-                        print(f"    ✅ Rendered view {v}")
+                        print(f"   Rendered view {v}")
                     except Exception as e:
-                        print(f"    ⚠️ Failed to save render for view {v}: {e}")
+                        print(f"  Failed to save render for view {v}: {e}")
             except Exception as e:
-                    print(f"    ⚠️ Failed to render views 0..{end_view}: {e}")
+                    print(f" Failed to render views 0..{end_view}: {e}")
                     import traceback
                     traceback.print_exc()
             
-            print(f"    ✅ Renders saved to {renders_dir.name}")
+            print(f"Renders saved to {renders_dir.name}")
         
         # Store pruned results for next iteration delta computation
         prev_pruned_for_save = pruned_for_save.copy()
