@@ -383,6 +383,9 @@ def main():
             W,
             save_ply=True,
             save_renders=True,
+            final_mask=final_mask,  # [S, H, W] boolean mask
+            cam_poses=predictions['camera_poses'],  # [B, S, 4, 4]
+            cam_intrs=predictions['camera_intrs'],  # [B, S, 3, 3]
         )
 
         # Render video using the same filtered splats from predictions

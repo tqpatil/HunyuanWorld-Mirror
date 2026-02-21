@@ -11,6 +11,37 @@ from src.utils.color_map import apply_color_map_to_image
 from tqdm import tqdm
 from PIL import Image
 
+def project_3d_to_2d(points_3d, c2w, K, H, W):
+    """
+    Project 3D world points to 2D pixel coordinates using camera extrinsics (c2w) and intrinsics (K).
+    
+    Args:
+        points_3d: [N, 3] tensor of 3D points in world coordinates.
+        c2w: [4, 4] camera-to-world matrix.
+        K: [3, 3] intrinsics matrix.
+        H, W: Image height/width.
+    
+    Returns:
+        x, y: [N] tensors of pixel coordinates (0-based).
+        valid: [N] boolean tensor indicating if projection is valid (in bounds, z > 0).
+    """
+    # Transform to camera coordinates: [N, 3] -> [3, N] -> [N, 3]
+    points_cam = (c2w[:3, :3] @ points_3d.T + c2w[:3, 3:4]).T
+    
+    # Project to homogeneous 2D: [3, N]
+    uv_hom = K @ points_cam.T
+    
+    # Normalize to pixel coords: [2, N]
+    uv = uv_hom[:2] / uv_hom[2]
+    
+    x, y = uv[0], uv[1]
+    
+    # Validity: in image bounds and in front of camera
+    valid = (x >= 0) & (x < W) & (y >= 0) & (y < H) & (points_cam[:, 2] > 0)
+    
+    return x, y, valid
+
+
 def rotation_matrix_to_quaternion(R):
     """Convert rotation matrix to quaternion"""
     trace = R[..., 0, 0] + R[..., 1, 1] + R[..., 2, 2]
@@ -386,6 +417,9 @@ def save_incremental_splats_and_render(
     W,
     save_ply=True,
     save_renders=True,
+    final_mask=None,  # [S, H, W] boolean mask (optional)
+    cam_poses=None,   # [B, S, 4, 4] (optional, needed if final_mask is provided)
+    cam_intrs=None,   # [B, S, 3, 3] (optional, needed if final_mask is provided)
 ):
     """
     Save splats incrementally as views accumulate, and render from those views.
@@ -403,6 +437,9 @@ def save_incremental_splats_and_render(
         W: Width of rendered images
         save_ply: Whether to save PLY files
         save_renders: Whether to render and save RGB/depth images
+        final_mask: [S, H, W] boolean mask for filtering splats (optional)
+        cam_poses: [B, S, 4, 4] camera poses (optional, needed if final_mask is provided)
+        cam_intrs: [B, S, 3, 3] camera intrinsics (optional, needed if final_mask is provided)
     """
     from src.utils.save_utils import save_gs_ply
     
@@ -441,6 +478,14 @@ def save_incremental_splats_and_render(
     view_map_b = view_mapping_tensor
     num_views = int(view_map_b.max().item()) + 1
     
+    # Validate mask inputs if provided
+    if final_mask is not None:
+        if cam_poses is None or cam_intrs is None:
+            raise ValueError("cam_poses and cam_intrs must be provided if final_mask is used")
+        final_mask_tensor = torch.from_numpy(final_mask).to(device)  # [S, H, W]
+    else:
+        final_mask_tensor = None
+    
     print(f"\n Incremental splat saving for {num_views} views")
     
     # Track pruned splats from previous iteration for delta computation
@@ -474,6 +519,41 @@ def save_incremental_splats_and_render(
                 filtered_splats_batched[k] = v.unsqueeze(0)  # Add batch dimension: [N, ...] -> [1, N, ...]
             else:
                 filtered_splats_batched[k] = v
+        
+        # Apply mask filtering if provided
+        if final_mask_tensor is not None:
+            mask_filtered_splats = {}
+            for key in ["means", "quats", "scales", "opacities", "sh", "weights", "view_mapping"]:
+                if key in filtered_splats_batched:
+                    mask_filtered_splats[key] = []
+            
+            # Process per splat
+            means = filtered_splats_batched["means"][0]  # [N, 3]
+            view_mapping = filtered_splats_batched["view_mapping"][0]  # [N]
+            
+            keep_indices = []
+            for i in range(means.shape[0]):
+                view_idx = int(view_mapping[i].item())
+                if view_idx >= cam_poses.shape[1] or view_idx >= cam_intrs.shape[1]:
+                    continue  # Invalid view
+                
+                c2w = cam_poses[0, view_idx]  # [4, 4]
+                K = cam_intrs[0, view_idx]    # [3, 3]
+                
+                point_3d = means[i].unsqueeze(0)  # [1, 3]
+                x, y, valid = project_3d_to_2d(point_3d, c2w, K, H, W)
+                
+                if valid[0] and final_mask_tensor[view_idx, int(y[0]), int(x[0])]:
+                    keep_indices.append(i)
+            
+            # Filter all tensors to keep only valid splats
+            for key in mask_filtered_splats:
+                if key in filtered_splats_batched:
+                    tensor = filtered_splats_batched[key][0]  # [N, ...]
+                    mask_filtered_splats[key] = [tensor[keep_indices]]
+            
+            filtered_splats_batched = mask_filtered_splats
+            print(f"   Mask-filtered splats: {len(keep_indices)} retained")
         
         # Prune the filtered subset (this is the KEY change: prune each iteration 0..k before delta)
         pruned_for_save = gs_renderer.prune_gs(filtered_splats_batched, voxel_size=gs_renderer.voxel_size)
