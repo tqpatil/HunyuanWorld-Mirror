@@ -522,11 +522,6 @@ def save_incremental_splats_and_render(
         
         # Apply mask filtering if provided
         if final_mask_tensor is not None:
-            mask_filtered_splats = {}
-            for key in ["means", "quats", "scales", "opacities", "sh", "weights", "view_mapping"]:
-                if key in filtered_splats_batched:
-                    mask_filtered_splats[key] = []
-            
             # Process per splat
             means = filtered_splats_batched["means"][0]  # [N, 3]
             view_mapping = filtered_splats_batched["view_mapping"][0]  # [N]
@@ -547,12 +542,11 @@ def save_incremental_splats_and_render(
                     keep_indices.append(i)
             
             # Filter all tensors to keep only valid splats
-            for key in mask_filtered_splats:
+            for key in ["means", "quats", "scales", "opacities", "sh", "weights", "view_mapping"]:
                 if key in filtered_splats_batched:
                     tensor = filtered_splats_batched[key][0]  # [N, ...]
-                    mask_filtered_splats[key] = [tensor[keep_indices]]
+                    filtered_splats_batched[key] = tensor[keep_indices].unsqueeze(0)
             
-            filtered_splats_batched = mask_filtered_splats
             print(f"   Mask-filtered splats: {len(keep_indices)} retained")
         
         # Prune the filtered subset (this is the KEY change: prune each iteration 0..k before delta)
