@@ -300,19 +300,8 @@ def main():
         normal_preds_np = predictions["normals"][0].detach().cpu().numpy()  # [S, H, W, 3]
         
         # Compute comprehensive filter mask
-        # Only apply confidence mask for incremental splats
-        final_mask = create_filter_mask(
-            pts3d_conf=pts3d_conf_np,
-            depth_preds=depth_preds_np,
-            normal_preds=normal_preds_np,
-            sky_mask=sky_mask,
-            confidence_percentile=args.confidence_percentile,
-            edge_normal_threshold=args.edge_normal_threshold,
-            edge_depth_threshold=args.edge_depth_threshold,
-            apply_confidence_mask=True,
-            apply_edge_mask=False,
-            apply_sky_mask=False,
-        )  # [S, H, W]
+        # No mask filtering for incremental splats
+        final_mask = np.ones(pts3d_conf_np.shape[:3], dtype=bool)  # [S, H, W]
         
         # Collect points and colors
         pts_list = []
