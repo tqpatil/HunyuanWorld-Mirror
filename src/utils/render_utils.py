@@ -492,71 +492,47 @@ def save_incremental_splats_and_render(
     prev_pruned_for_save = None
     prev_pruned_view_multi = None
 
-    # For each ending view index
-    for end_view in range(1, num_views):  # start from view 1 (so we have views 0..1)
+    # Only save the final cumulative splats (0..N) and the deltas for each step
+    for end_view in range(1, num_views):
         print(f"\n  Processing views 0..{end_view} ({end_view + 1} views total)")
-        
-        # Filter splats for views 0..end_view from original unpruned splats
         mask = view_map_b <= end_view
         filtered_splats = {}
-        
         for key in ["means", "quats", "scales", "opacities", "sh", "weights", "view_mapping"]:
             if key in splats:
                 splat_entry = splats[key]
                 if isinstance(splat_entry, list):
-                    # List format from prune_gs: take first batch, filter by mask
                     filtered_splats[key] = splat_entry[0][mask].clone()
                 elif isinstance(splat_entry, torch.Tensor) and splat_entry.ndim >= 2:
-                    # Tensor format: [B, N, ...], take first batch and filter
                     filtered_splats[key] = splat_entry[0][mask].clone()
                 else:
                     filtered_splats[key] = splat_entry
-        
-        # Add batch dimension for prune_gs (expects [B, N, ...] format)
         filtered_splats_batched = {}
         for k, v in filtered_splats.items():
             if isinstance(v, torch.Tensor):
-                filtered_splats_batched[k] = v.unsqueeze(0)  # Add batch dimension: [N, ...] -> [1, N, ...]
+                filtered_splats_batched[k] = v.unsqueeze(0)
             else:
                 filtered_splats_batched[k] = v
-        
-        # Apply mask filtering if provided
         if final_mask_tensor is not None:
-            # Process per splat
-            means = filtered_splats_batched["means"][0]  # [N, 3]
-            view_mapping = filtered_splats_batched["view_mapping"][0]  # [N]
-            
+            means = filtered_splats_batched["means"][0]
+            view_mapping = filtered_splats_batched["view_mapping"][0]
             keep_indices = []
             for i in range(means.shape[0]):
                 view_idx = int(view_mapping[i].item())
                 if view_idx >= cam_poses.shape[1] or view_idx >= cam_intrs.shape[1]:
-                    continue  # Invalid view
-                
-                c2w = cam_poses[0, view_idx]  # [4, 4]
-                K = cam_intrs[0, view_idx]    # [3, 3]
-                
-                point_3d = means[i].unsqueeze(0)  # [1, 3]
+                    continue
+                c2w = cam_poses[0, view_idx]
+                K = cam_intrs[0, view_idx]
+                point_3d = means[i].unsqueeze(0)
                 x, y, valid = project_3d_to_2d(point_3d, c2w, K, H, W)
-                
                 if valid[0] and final_mask_tensor[view_idx, int(y[0]), int(x[0])]:
                     keep_indices.append(i)
-            
-            # Filter all tensors to keep only valid splats
             for key in ["means", "quats", "scales", "opacities", "sh", "weights", "view_mapping"]:
                 if key in filtered_splats_batched:
-                    tensor = filtered_splats_batched[key][0]  # [N, ...]
+                    tensor = filtered_splats_batched[key][0]
                     filtered_splats_batched[key] = tensor[keep_indices].unsqueeze(0)
-            
             print(f"   Mask-filtered splats: {len(keep_indices)} retained")
-        
-        # Prune the filtered subset (this is the KEY change: prune each iteration 0..k before delta)
         pruned_for_save = gs_renderer.prune_gs(filtered_splats_batched, voxel_size=gs_renderer.voxel_size)
-        
-        # Extract from list format returned by prune_gs: prune_gs returns {"means": [tensor], ...}
-        pruned_for_save = {k: (v[0] if isinstance(v, list) and len(v) > 0 else v) 
-                           for k, v in pruned_for_save.items()}
-
-        # Get current pruned count and contributor info
+        pruned_for_save = {k: (v[0] if isinstance(v, list) and len(v) > 0 else v) for k, v in pruned_for_save.items()}
         curr_pruned_count = 0
         pruned_view_multi = pruned_for_save.get("view_mapping_multi", None)
         if "means" in pruned_for_save:
@@ -564,69 +540,28 @@ def save_incremental_splats_and_render(
                 curr_pruned_count = int(pruned_for_save["means"].shape[0])
             except Exception:
                 curr_pruned_count = 0
-
         print(f"   Views 0..{end_view}: pruned splats={curr_pruned_count}")
-
-        # Compute delta based on pruned results from previous iteration
-        # Delta includes: (1) splats only in current pruned set, (2) splats that blended with view end_view
         delta_indices = None
         if end_view > 0 and prev_pruned_for_save is not None:
-            # Identify delta splats by looking at which merged splats involve the new view end_view
             if pruned_view_multi is not None:
                 try:
-                    # pruned_view_multi: [K, V_subset] boolean mask
-                    # Get indices of splats that involve end_view
                     if end_view < pruned_view_multi.shape[1]:
                         mask_involve_new_view = pruned_view_multi[:, end_view]
-                        # Also get indices of NEW splats (in current but not in previous)
-                        # For now, count how many: current K - prev K
                         curr_K = pruned_for_save["means"].shape[0]
                         prev_K = prev_pruned_for_save["means"].shape[0] if prev_pruned_for_save is not None else 0
                         num_new_splats = max(0, curr_K - prev_K)
-                        
-                        # Delta splats are: all splats that involve new view + new splats at end
-                        # New splats are those added to the merged set, assume they're at the end
-                        # (pruning adds to end of merged list)
                         delta_mask = mask_involve_new_view.clone()
-                        # Mark last num_new_splats as new (these are splats that didn't exist before)
                         if num_new_splats > 0:
                             delta_mask[-num_new_splats:] = True
                         delta_indices = torch.where(delta_mask)[0]
                 except Exception as e:
                     print(f"Error computing delta from pruned contributor info: {e}")
                     delta_indices = None
-        
-        # Count added splats for logging
         added_pruned_count = 0
         if delta_indices is not None:
             added_pruned_count = len(delta_indices)
         print(f"      added (from delta): {added_pruned_count} splats")
-        
-        # Save PLY
-        if save_ply:
-            ply_path = incremental_dir / f"splats_views_0to{end_view}.ply"
-            means = pruned_for_save["means"]
-            scales = pruned_for_save["scales"]
-            quats = pruned_for_save["quats"]
-            colors = pruned_for_save["sh"] if "sh" in pruned_for_save else torch.ones_like(means)
-            opacities = pruned_for_save["opacities"]
-            
-            # Ensure proper shapes for save_gs_ply
-            if means.ndim > 2:
-                means = means.reshape(-1, 3)
-            if scales.ndim > 2:
-                scales = scales.reshape(-1, 3)
-            if quats.ndim > 2:
-                quats = quats.reshape(-1, 4)
-            if colors.ndim > 2:
-                colors = colors.reshape(-1, 3)
-            if opacities.ndim > 1:
-                opacities = opacities.reshape(-1)
-            
-            save_gs_ply(ply_path, means, scales, quats, colors, opacities)
-            print(f"    Saved {len(means)} splats (pruned) to {ply_path.name}")
-        
-        # Save delta PLY (splats involving new view + newly merged splats)
+        # Only save delta splats for each step
         if save_ply and end_view > 0:
             ply_path_delta = incremental_dir / f"splats_delta_{end_view - 1}to{end_view}.ply"
             if delta_indices is not None and len(delta_indices) > 0:
@@ -637,9 +572,7 @@ def save_incremental_splats_and_render(
                 opacities_delta = pruned_for_save["opacities"][delta_indices]
             else:
                 means_delta = scales_delta = quats_delta = colors_delta = opacities_delta = None
-
             if means_delta is not None:
-                # Ensure proper shapes
                 if means_delta.ndim > 2:
                     means_delta = means_delta.reshape(-1, 3)
                 if scales_delta is not None and scales_delta.ndim > 2:
@@ -650,75 +583,40 @@ def save_incremental_splats_and_render(
                     colors_delta = colors_delta.reshape(-1, 3)
                 if opacities_delta is not None and opacities_delta.ndim > 1:
                     opacities_delta = opacities_delta.reshape(-1)
-
                 save_gs_ply(ply_path_delta, means_delta, scales_delta, quats_delta, colors_delta, opacities_delta)
                 print(f"   Saved {len(means_delta)} delta splats to {ply_path_delta.name}")
+        # Only save the final cumulative splats (0..N) at the last step
+        if save_ply and end_view == num_views - 1:
+            ply_path = incremental_dir / f"splats_views_0to{end_view}.ply"
+            means = pruned_for_save["means"]
+            scales = pruned_for_save["scales"]
+            quats = pruned_for_save["quats"]
+            colors = pruned_for_save["sh"] if "sh" in pruned_for_save else torch.ones_like(means)
+            opacities = pruned_for_save["opacities"]
+            if means.ndim > 2:
+                means = means.reshape(-1, 3)
+            if scales.ndim > 2:
+                scales = scales.reshape(-1, 3)
+            if quats.ndim > 2:
+                quats = quats.reshape(-1, 4)
+            if colors.ndim > 2:
+                colors = colors.reshape(-1, 3)
+            if opacities.ndim > 1:
+                opacities = opacities.reshape(-1)
+            save_gs_ply(ply_path, means, scales, quats, colors, opacities)
+            print(f"    Saved {len(means)} splats (pruned) to {ply_path.name}")
         
-        # Render from cameras of views 0..end_view
-        if save_renders:
-            renders_dir = incremental_dir / f"renders_views_0to{end_view}"
-            renders_dir.mkdir(exist_ok=True)
-            
-            # Reuse pruned_for_save which was already pruned above (avoid re-pruning)
-            pruned_splats = pruned_for_save.copy()
-            
-            # Get camera poses/intrinsics for views 0..end_view
-            cam_poses = predictions.get("camera_poses", torch.eye(4, device=device).unsqueeze(0).unsqueeze(0))
-            cam_intrs = predictions.get("camera_intrs", torch.eye(3, device=device).unsqueeze(0).unsqueeze(0))
-            
-            # Slice to views 0..end_view (assuming [B, V, ...] format)
-            if cam_poses.ndim == 4:  # [B, V, 4, 4]
-                cam_poses_subset = cam_poses[:, :end_view+1]  # [B, V_subset, 4, 4]
-                cam_intrs_subset = cam_intrs[:, :end_view+1]  # [B, V_subset, 3, 3]
-            else:
-                cam_poses_subset = cam_poses
-                cam_intrs_subset = cam_intrs
-            
-            # Prepare pruned splats with batch dimension (rasterize_batches indexes into batch dim)
-            # pruned_splats has shape [N, ...] after extraction, we need [B=1, N, ...]
-            means = pruned_splats["means"].unsqueeze(0) if pruned_splats["means"].ndim == 2 else pruned_splats["means"]  # [1, N, 3/4]
-            quats = pruned_splats["quats"].unsqueeze(0) if pruned_splats["quats"].ndim == 2 else pruned_splats["quats"]  # [1, N, 4]
-            scales = pruned_splats["scales"].unsqueeze(0) if pruned_splats["scales"].ndim == 2 else pruned_splats["scales"]  # [1, N, 3]
-            opacities = pruned_splats["opacities"].unsqueeze(0) if pruned_splats["opacities"].ndim == 1 else pruned_splats["opacities"]  # [1, N]
-            sh = pruned_splats["sh"].unsqueeze(0) if pruned_splats["sh"].ndim == 3 else pruned_splats["sh"]  # [1, N, num_sh_coeffs, 3]
-            try:
-                # cam_poses_subset and cam_intrs_subset are [B, V_subset, ...]
-                cams_c2w = cam_poses_subset.to(torch.float32)
-                cams_K = cam_intrs_subset.to(torch.float32)
-
-                colors_arg = sh if "sh" in pruned_splats else pruned_splats.get("colors")
-
-                render_colors, render_depths, _ = gs_renderer.rasterizer.rasterize_batches(
-                    means, quats, scales, opacities,
-                    colors_arg,
-                    cams_c2w, cams_K,
-                    width=W, height=H,
-                    sh_degree=gs_renderer.sh_degree if "sh" in pruned_splats else None,
-                )
-
-                # render_colors: [B, V_subset, H, W, 3]
-                V_out = render_colors.shape[1]
-                for v in range(V_out):
-                    try:
-                        rgb = render_colors[0, v].clamp(0, 1)
-                        rgb_img = (rgb * 255).to(torch.uint8).cpu().numpy()
-                        Image.fromarray(rgb_img).save(str(renders_dir / f"render_view_{v:02d}_rgb.png"))
-
-                        depth = render_depths[0, v, :, :, 0].clamp(0, None)
-                        depth_normalized = (depth - depth.min()) / (depth.max() - depth.min() + 1e-8)
-                        depth_img = (depth_normalized * 255).to(torch.uint8).cpu().numpy()
-                        Image.fromarray(depth_img).save(str(renders_dir / f"render_view_{v:02d}_depth.png"))
-
-                        print(f"   Rendered view {v}")
-                    except Exception as e:
-                        print(f"  Failed to save render for view {v}: {e}")
-            except Exception as e:
-                    print(f" Failed to render views 0..{end_view}: {e}")
-                    import traceback
-                    traceback.print_exc()
-            
-            print(f"Renders saved to {renders_dir.name}")
-        
-        # Store pruned results for next iteration delta computation
+        # Skip rendering, but save camera poses and intrinsics for each incremental step
+        cam_poses = predictions.get("camera_poses", torch.eye(4, device=device).unsqueeze(0).unsqueeze(0))
+        cam_intrs = predictions.get("camera_intrs", torch.eye(3, device=device).unsqueeze(0).unsqueeze(0))
+        if cam_poses.ndim == 4:
+            cam_poses_subset = cam_poses[:, :end_view+1]
+            cam_intrs_subset = cam_intrs[:, :end_view+1]
+        else:
+            cam_poses_subset = cam_poses
+            cam_intrs_subset = cam_intrs
+        # Save camera poses and intrinsics for this step
+        np.save(incremental_dir / f"camera_poses_0to{end_view}.npy", cam_poses_subset[0].detach().cpu().numpy())
+        np.save(incremental_dir / f"camera_intrs_0to{end_view}.npy", cam_intrs_subset[0].detach().cpu().numpy())
         prev_pruned_for_save = pruned_for_save.copy()
         prev_pruned_view_multi = pruned_view_multi.clone() if pruned_view_multi is not None else None
