@@ -114,10 +114,11 @@ def create_filter_mask(
 
 def main():
     parser = argparse.ArgumentParser(description="HunyuanWorld-Mirror inference")
-    parser.add_argument("--input_path", type=str, default="examples/realistic/Ireland_Landscape", help="Input can be: a directory of images; a single video file; or a directory containing multiple video files (.mp4/.avi/.mov/.webm/.gif). If directory has multiple videos, frames from all clips are extracted (using --fps) and merged in filename order.")
-    parser.add_argument("--output_path", type=str, default="inference_output")
+    parser.add_argument("--input_path", type=str, default="examples/realistic", help="Input root directory containing 1K/2K/3K... subfolders, each with scene UUID folders.")
+    parser.add_argument("--output_path", type=str, default="inference_output", help="Output root directory.")
     parser.add_argument("--fps", type=int, default=1, help="Frames per second for video extraction")
     parser.add_argument("--target_size", type=int, default=518, help="Target size for image resizing")
+    parser.add_argument("--batch_size", type=int, default=1, help="Batch size for processing scenes")
     parser.add_argument("--write_txt", action="store_true", help="Also write human-readable COLMAP txt (slow, huge)")
     # Mask filtering parameters
     parser.add_argument("--confidence_percentile", type=float, default=10.0, help="Confidence percentile threshold for filtering (0-100, filters bottom X percent)")
@@ -152,353 +153,121 @@ def main():
     print(f"    - Intrinsics: {'✅' if args.cond_intrinsics else '❌'}")
     print(f"    - Depth: {'✅' if args.cond_depth else '❌'}")
 
+
     # 1) Init model - This requires internet access or the huggingface hub cache to be pre-downloaded
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = WorldMirror.from_pretrained("tencent/HunyuanWorld-Mirror").to(device)
     model.eval()
-    
-    input_path = Path(args.input_path)
-    
-    # Create output directory with filename-based subdirectory
-    if input_path.is_file():
-        subdir_name = input_path.stem
-    elif input_path.is_dir():
-        subdir_name = input_path.name
-    else:
-        raise ValueError(f"❌ Invalid input path: {input_path} (must be directory or video file)")
-    
-    outdir = Path(args.output_path) / subdir_name
-    outdir.mkdir(parents=True, exist_ok=True)
-    
-    # Determine input type and get image paths
-    video_exts = ['.mp4', '.avi', '.mov', '.webm', '.gif']
-    
-    if input_path.is_file() and input_path.suffix.lower() in video_exts:
-        # Case 1: Single video file - extract frames
-        print(f"📹 Processing video: {input_path}")
-        input_frames_dir = outdir / "input_frames"
-        input_frames_dir.mkdir(exist_ok=True)
-        img_paths = select_frames_by_camera_poses(str(input_path), n=10, output_dir=str(input_frames_dir))
-        if not img_paths:
-            raise RuntimeError("❌ Failed to extract frames from video")
 
-        img_paths = sorted(img_paths)
-        print(f"✅ Extracted {len(img_paths)} frames to {input_frames_dir}")
-    
-    elif input_path.is_dir():
-        # Check if this is a DL3DV-10K dataset (has transforms.json)
-        transforms_path = input_path / "transforms.json"
-        if transforms_path.exists():
-            # Case 2a: DL3DV-10K dataset with transforms.json (precomputed COLMAP poses)
-            print(f"📁 Processing DL3DV dataset: {input_path}")
-            input_frames_dir = outdir / "input_frames"
-            input_frames_dir.mkdir(exist_ok=True)
-            img_paths = select_frames_from_dl3dv(str(input_path), n=10, output_dir=str(input_frames_dir))
-            if not img_paths:
-                raise RuntimeError("❌ Failed to select frames from DL3DV dataset")
-            img_paths = sorted(img_paths)
-            print(f"✅ Selected {len(img_paths)} frames using precomputed COLMAP poses")
-        else:
-            # Case 2b: Regular directory of images
-            print(f"📁 Processing directory: {input_path}")
+    input_root = Path(args.input_path)
+    output_root = Path(args.output_path)
+
+    # Find all scene UUID folders under 1K/2K/3K... structure
+    scene_dirs = []
+    for subdir in sorted(input_root.iterdir()):
+        if not subdir.is_dir() or not subdir.name[0].isdigit():
+            continue
+        for uuid_dir in sorted(subdir.iterdir()):
+            if uuid_dir.is_dir():
+                scene_dirs.append(uuid_dir)
+
+    print(f"Found {len(scene_dirs)} scenes to process.")
+
+    # Batch processing
+    batch_size = args.batch_size
+    for batch_start in range(0, len(scene_dirs), batch_size):
+        batch_scene_dirs = scene_dirs[batch_start:batch_start+batch_size]
+        batch_imgs = []
+        batch_views = []
+        batch_img_paths = []
+        batch_scene_names = []
+        batch_H, batch_W = None, None
+        for scene_dir in batch_scene_dirs:
+            # Find input images or video in uuid_dir
             img_paths = []
             for ext in ["*.jpeg", "*.jpg", "*.png", "*.webp"]:
-                img_paths.extend(glob.glob(os.path.join(str(input_path), ext)))
-            if len(img_paths) == 0:
-                raise FileNotFoundError(f"❌ No image files found in {input_path}")
-            img_paths = sorted(img_paths)
-            print(f"✅ Loaded {len(img_paths)} images from {input_path}")
-
-    else:
-        raise ValueError(f"❌ Invalid input path: {input_path}")
-
-    # 3) Load and preprocess images
-    views = {}
-    imgs = prepare_images_to_tensor(img_paths, target_size=args.target_size, resize_strategy="crop").to(device)  # [1,S,3,H,W], in [0,1]
-    views["img"] = imgs
-    B, S, C, H, W = imgs.shape
-    cond_flags = [0, 0, 0]
-    print(f"📸 Loaded {S} images with shape {imgs.shape}")
-
-    # 4) Inference
-    print("\n🚀 Starting inference pipeline...")
-    start_time = time.time()
-    use_amp = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
-    if use_amp:
-        amp_dtype = torch.bfloat16
-    else:
-        amp_dtype = torch.float32
-    with torch.no_grad():
-        with torch.amp.autocast('cuda', enabled=bool(use_amp), dtype=amp_dtype):
-            predictions = model(views=views, cond_flags=cond_flags)  # Multi-modal inference with priors
-    print(f"🕒 Inference time: {time.time() - start_time:.3f} seconds")
-    
-    # 4.5) Sky mask segmentation (if needed)
-    sky_mask = None
-    if args.apply_sky_mask:
-        print("\n🌤️  Computing sky masks...")
-        if not os.path.exists("skyseg.onnx"):
-            print("Downloading skyseg.onnx...")
-            download_file_from_url(
-                "https://huggingface.co/JianyuanWang/skyseg/resolve/main/skyseg.onnx", "skyseg.onnx"
-            )
-        skyseg_session = onnxruntime.InferenceSession("skyseg.onnx")
-        sky_mask_list = []
-        for i, img_path in enumerate(img_paths):
-            sky_mask_frame = segment_sky(img_path, skyseg_session)
-            # Resize mask to match H×W if needed
-            if sky_mask_frame.shape[0] != H or sky_mask_frame.shape[1] != W:
-                sky_mask_frame = cv2.resize(sky_mask_frame, (W, H))
-            sky_mask_list.append(sky_mask_frame)
-        sky_mask = np.stack(sky_mask_list, axis=0)  # [S, H, W]
-        sky_mask = sky_mask > 0  # Binary mask: True = non-sky, False = sky
-        print(f"✅ Sky masks computed for {S} frames")
-    else:
-        # Create dummy sky mask (all True = keep all points)
-        sky_mask = np.ones((S, H, W), dtype=bool)
-    
-    # 5) Save results
-    print("\n📤 Saving results...")
-    images_dir = outdir / "images" # original resolution images
-    images_dir.mkdir(exist_ok=True)
-    images_resized_dir = outdir / "images_resized" # resized images
-    images_resized_dir.mkdir(exist_ok=True)
-    if args.save_depth:
-        depth_dir = outdir / "depth"
-        depth_dir.mkdir(exist_ok=True)
-    if args.save_normal:
-        normal_dir = outdir / "normal"
-        normal_dir.mkdir(exist_ok=True)
-    if args.save_colmap:
-        sparse_dir = outdir / "sparse" / "0"
-        sparse_dir.mkdir(parents=True, exist_ok=True)
-    
-    # save images
-    processed_image_names = []
-    for i in range(S):
-        im = (imgs[0, i].permute(1, 2, 0).clamp(0, 1) * 255).to(torch.uint8).cpu().numpy()
-        fname = f"image_{i+1:04d}.png"
-        Image.fromarray(im).save(str(images_resized_dir / fname))
-        pil_img = Image.open(img_paths[i]).convert("RGB")
-        processed_height, processed_width = imgs[0, i].shape[1], imgs[0, i].shape[2]
-        processed_aspect_ratio = processed_width / processed_height
-        orig_width, orig_height = pil_img.size
-        new_height = int(orig_width / processed_aspect_ratio)
-        new_width = orig_width
-        pil_img = pil_img.resize((orig_width, new_height), Image.Resampling.BICUBIC)
-        pil_img.save(str(images_dir / fname))
-
-        processed_image_names.append(fname)
-        
-    # save pointmap with filtering
-    if "pts3d" in predictions and args.save_pointmap:
-        print("Computing filter mask for pointmap...")
-        
-        # Prepare data for mask computation
-        pts3d_conf_np = predictions["pts3d_conf"][0].detach().cpu().numpy()  # [S, H, W]
-        depth_preds_np = predictions["depth"][0].detach().cpu().numpy()  # [S, H, W, 1]
-        normal_preds_np = predictions["normals"][0].detach().cpu().numpy()  # [S, H, W, 3]
-        
-        # Compute comprehensive filter mask
-        # No mask filtering for incremental splats
-        final_mask = np.ones(pts3d_conf_np.shape[:3], dtype=bool)  # [S, H, W]
-        
-        # Collect points and colors
-        pts_list = []
-        pts_colors_list = []
-        
-        for i in range(S):
-            pts = predictions["pts3d"][0, i]  # [H,W,3]
-            img_colors = imgs[0, i].permute(1, 2, 0)  # [H, W, 3]
-            img_colors = (img_colors * 255).to(torch.uint8)
-            
-            pts_list.append(pts.reshape(-1, 3))
-            pts_colors_list.append(img_colors.reshape(-1, 3))
-
-        all_pts = torch.cat(pts_list, dim=0)
-        all_colors = torch.cat(pts_colors_list, dim=0)
-        
-        # Apply filter mask
-        final_mask_flat = final_mask.reshape(-1)  # Flatten to [S*H*W]
-        final_mask_torch = torch.from_numpy(final_mask_flat).to(all_pts.device)
-        
-        filtered_pts = all_pts[final_mask_torch]
-        filtered_colors = all_colors[final_mask_torch]
-        
-        save_scene_ply(outdir / "pts_from_pointmap.ply", filtered_pts, filtered_colors)
-        print(f"  - Saved {len(filtered_pts)} filtered points to {outdir / 'pts_from_pointmap.ply'}")
-
-    # save depthmap
-    if "depth" in predictions and args.save_depth:
-        for i in range(S):
-            # Save both PNG (for visualization) and NPY (for actual depth values)
-            save_depth_png(depth_dir / f"depth_{i:04d}.png", predictions["depth"][0, i, :, :, 0])
-            save_depth_npy(depth_dir / f"depth_{i:04d}.npy", predictions["depth"][0, i, :, :, 0])
-        print(f"  - Saved {S} depth maps to {depth_dir} (both PNG and NPY formats)")
-
-    # save normalmap
-    if "normals" in predictions and args.save_normal:
-        for i in range(S):
-            save_normal_png(normal_dir / f"normal_{i:04d}.png", predictions["normals"][0, i])
-        print(f"  - Saved {S} normal maps to {normal_dir}")
-
-    # Save Gaussians PLY and render video
-    if "splats" in predictions and args.save_gs:
-        # Get Gaussian parameters (already filtered by GaussianSplatRenderer)
-        means = predictions["splats"]["means"][0].reshape(-1, 3)
-        scales = predictions["splats"]["scales"][0].reshape(-1, 3)
-        quats = predictions["splats"]["quats"][0].reshape(-1, 4)
-        colors = (predictions["splats"]["sh"][0] if "sh" in predictions["splats"] else predictions["splats"]["colors"][0]).reshape(-1, 3)
-        opacities = predictions["splats"]["opacities"][0].reshape(-1)
-        
-        # Save Gaussian PLY
-        ply_path = outdir / "gaussians.ply"
-        save_gs_ply(
-            ply_path,
-            means,
-            scales,
-            quats,
-            colors,
-            opacities,
-        )
-
-        # Save incremental splats (views 0-1, 0-2, 0-3, ...) with renders
-        model.gs_renderer.voxel_size = 0.002
-        save_incremental_splats_and_render(
-            predictions["splats"],
-            predictions,
-            model.gs_renderer,
-            outdir,
-            H,
-            W,
-            save_ply=True,
-            save_renders=True,
-            final_mask=final_mask,  # [S, H, W] boolean mask
-            cam_poses=predictions['camera_poses'],  # [B, S, 4, 4]
-            cam_intrs=predictions['camera_intrs'],  # [B, S, 3, 3]
-        )
-
-        # Render video using the same filtered splats from predictions
-        num_views = S
-        if args.save_rendered:
-            e4x4 = predictions['camera_poses']
-            k3x3 = predictions['camera_intrs']
-            render_interpolated_video(model.gs_renderer, predictions["splats"], e4x4, k3x3, (H, W), outdir / "rendered", interp_per_pair=15, loop_reverse=num_views==1)
-            print(f"  - Saved rendered.mp4 to {outdir}")
-        else:
-            print(f"⚠️  Not set --save_rendered flag, skipping video rendering")
-
-    # Build and export COLMAP reconstruction (images + sparse)
-    if args.save_colmap:
-        print("Computing filter mask for COLMAP reconstruction...")
-        
-        final_width, final_height = new_width, new_height
-        print(f"colmap_width: {final_width}, colmap_height: {final_height}")
-        
-        # Prepare data for mask computation (reuse from pointmap if not already computed)
-        if not ("pts3d" in predictions and args.save_pointmap):
-            pts3d_conf_np = predictions["pts3d_conf"][0].detach().cpu().numpy()  # [S, H, W]
-            depth_preds_np = predictions["depth"][0].detach().cpu().numpy()  # [S, H, W, 1]
-            normal_preds_np = predictions["normals"][0].detach().cpu().numpy()  # [S, H, W, 3]
-            
-            # Compute comprehensive filter mask
-            final_mask = create_filter_mask(
-                pts3d_conf=pts3d_conf_np,
-                depth_preds=depth_preds_np,
-                normal_preds=normal_preds_np,
-                sky_mask=sky_mask,
-                confidence_percentile=args.confidence_percentile,
-                edge_normal_threshold=args.edge_normal_threshold,
-                edge_depth_threshold=args.edge_depth_threshold,
-                apply_confidence_mask=args.apply_confidence_mask,
-                apply_edge_mask=args.apply_edge_mask,
-                apply_sky_mask=args.apply_sky_mask,
-            )  # [S, H, W]
-        
-        # Prepare extrinsics/intrinsics (camera-from-world) using resized image size
-        e3x4, intr = vector_to_camera_matrices(predictions["camera_params"], image_hw=(final_height, final_width))
-        _, intr_resize = vector_to_camera_matrices(predictions["camera_params"], image_hw=(H, W))
-        extrinsics = e3x4[0] # [S,3,4]
-        intrinsics = intr[0] # [S,3,3]
-        intrinsics_resize = intr_resize[0] # [S,3,3]
-                
-        points_list = []
-        colors_list = []
-        xyf_list = []
-
-        # Precompute pixel coordinate grid (XYF) like demo_colmap
-        xyf_grid = create_pixel_coordinate_grid(num_frames=S, height=H, width=W)  # [S,H,W,3] float32
-        xyf_grid = xyf_grid.astype(np.int32)
-        
-        # Calculate scaling factors to map from processed to resized coordinates
-        scale_x = final_width / W
-        scale_y = final_height / H
-
-        # Use the SAME coordinate transformation as GaussianSplatRenderer.prepare_splats
-        # to ensure consistency between Gaussian PLY and depth-based sparse points
-        for i in range(S):
-            d = predictions["depth"][0, i, :, :, 0]
-            w2c = extrinsics[i][:3, :4]  # [3, 4] camera-to-world
-            w2c = torch.cat([w2c, torch.tensor([[0, 0, 0, 1]], device=w2c.device)], dim=0)  # [4,4]
-            c2w = torch.linalg.inv(w2c)[:3, :4]  # [4,4]
-            K = intrinsics_resize[i]
-            pts_i, _, mask = depth_to_world_coords_points(d[None], c2w[None], K[None])
-
-            img_colors = (imgs[0, i].permute(1, 2, 0) * 255).to(torch.uint8)
-            
-            # Apply filter mask from mask computation
-            filter_mask_frame = torch.from_numpy(final_mask[i]).to(mask.device)  # [H, W]
-            valid = mask[0] & filter_mask_frame  # Combine depth validity with filter mask
-            
-            if valid.sum().item() == 0:
+                img_paths.extend(sorted(scene_dir.glob(ext)))
+            video_exts = ['.mp4', '.avi', '.mov', '.webm', '.gif']
+            if not img_paths:
+                # Try video
+                for file in scene_dir.iterdir():
+                    if file.suffix.lower() in video_exts:
+                        # Extract frames
+                        input_frames_dir = scene_dir / "input_frames"
+                        input_frames_dir.mkdir(exist_ok=True)
+                        img_paths = select_frames_by_camera_poses(str(file), n=10, output_dir=str(input_frames_dir))
+                        img_paths = sorted(img_paths)
+                        break
+            if not img_paths:
+                print(f"No images or video found in {scene_dir}, skipping.")
                 continue
-            xyf_np = xyf_grid[i][valid.cpu().numpy()]  # [N,3] int32
-            xyf_list.append(torch.from_numpy(xyf_np).to(valid.device))
-            points_list.append(pts_i[0][valid])
-            colors_list.append(img_colors[valid])
+            imgs = prepare_images_to_tensor(img_paths, target_size=args.target_size, resize_strategy="crop").to(device)
+            batch_imgs.append(imgs)
+            batch_views.append({"img": imgs})
+            batch_img_paths.append(img_paths)
+            batch_scene_names.append(scene_dir)
+            if batch_H is None or batch_W is None:
+                batch_H, batch_W = imgs.shape[-2], imgs.shape[-1]
 
-        all_pts = torch.cat(points_list, dim=0)
-        all_cols = torch.cat(colors_list, dim=0)
-        all_xyf = torch.cat(xyf_list, dim=0)
+        if not batch_imgs:
+            continue
 
-        # Convert to numpy
-        extrinsics = extrinsics.detach().cpu().numpy()
-        intrinsics = intrinsics.detach().cpu().numpy()
-        f_pts = all_pts.detach().cpu().to(torch.float32).numpy()
-        f_cols = all_cols.detach().cpu().to(torch.uint8).numpy()
-        f_xyf = all_xyf.detach().cpu().to(torch.int32).numpy()
-        
-        # Scale 2D coordinates from processed image to resized image resolution (if still valid)
-        f_xyf[:, 0] = (f_xyf[:, 0] * scale_x).astype(np.int32)  # x coordinates
-        f_xyf[:, 1] = (f_xyf[:, 1] * scale_y).astype(np.int32)  # y coordinates
+        # Stack for batch
+        imgs_batch = torch.cat(batch_imgs, dim=0)  # [B, S, 3, H, W]
+        views_batch = {"img": imgs_batch}
+        B, S, C, H, W = imgs_batch.shape
+        cond_flags = [0, 0, 0]
 
-        # Build reconstruction using pycolmap (PINHOLE) with resized image size
-        # Standard COLMAP reconstruction with 2D-3D correspondences
-        image_size = np.array([final_width, final_height])
-        reconstruction = build_pycolmap_reconstruction(
-            points=f_pts,
-            pixel_coords=f_xyf,
-            point_colors=f_cols,
-            poses=extrinsics,
-            intrinsics=intrinsics,
-            image_size=image_size,
-            shared_camera_model=False,
-            camera_model="SIMPLE_PINHOLE",
-        )
+        print(f"Processing batch of {B} scenes, {S} views each.")
+        # Inference
+        with torch.no_grad():
+            use_amp = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
+            amp_dtype = torch.bfloat16 if use_amp else torch.float32
+            with torch.amp.autocast('cuda', enabled=bool(use_amp), dtype=amp_dtype):
+                predictions_batch = model(views=views_batch, cond_flags=cond_flags)
 
-        # Update image names to match saved files
-        for pyimageid in reconstruction.images:
-            reconstruction.images[pyimageid].name = processed_image_names[pyimageid - 1]
+        # For each scene in batch, save outputs in organized structure
+        for bidx, scene_dir in enumerate(batch_scene_names):
+            scene_uuid = scene_dir.name
+            parent_dir = scene_dir.parent.name
+            outdir = output_root / parent_dir / scene_uuid
+            outdir.mkdir(parents=True, exist_ok=True)
 
-        # Write BIN
-        reconstruction.write(str(sparse_dir))
-        # Save points3D.ply
-        save_points_ply(sparse_dir / "points3D.ply", f_pts, f_cols)
-        
-        print(f"  - Saved COLMAP BIN and points3D.ply to {sparse_dir}")
-        
-        
-if __name__ == "__main__":
-    main()
+            # Save input frames
+            input_frames_dir = outdir / "input_frames"
+            input_frames_dir.mkdir(exist_ok=True)
+            for i, img_path in enumerate(batch_img_paths[bidx]):
+                fname = f"image_{i+1:04d}.png"
+                img = Image.open(img_path).convert("RGB")
+                img.save(str(input_frames_dir / fname))
+
+            # Save incremental splats and renders
+            if "splats" in predictions_batch and args.save_gs:
+                model.gs_renderer.voxel_size = 0.002
+                save_incremental_splats_and_render(
+                    predictions_batch["splats"],
+                    predictions_batch,
+                    model.gs_renderer,
+                    outdir,
+                    H,
+                    W,
+                    save_ply=True,
+                    save_renders=True,
+                    final_mask=None,
+                    cam_poses=predictions_batch.get('camera_poses'),
+                    cam_intrs=predictions_batch.get('camera_intrs'),
+                )
+
+            # Save predicted camera poses
+            if "camera_poses" in predictions_batch:
+                cam_poses = predictions_batch["camera_poses"][bidx].detach().cpu().numpy()  # [S, 4, 4]
+                np.save(outdir / "predicted_camera_poses.npy", cam_poses)
+            if "camera_intrs" in predictions_batch:
+                cam_intrs = predictions_batch["camera_intrs"][bidx].detach().cpu().numpy()  # [S, 3, 3]
+                np.save(outdir / "predicted_camera_intrs.npy", cam_intrs)
+
+            # Optionally, save other outputs (depth, normals, etc.) as needed
+
+
 
 
