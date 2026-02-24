@@ -171,11 +171,13 @@ def main():
             if uuid_dir.is_dir():
                 scene_dirs.append(uuid_dir)
 
-    print(f"Found {len(scene_dirs)} scenes to process.")
+    print(f"[DEBUG] Found {len(scene_dirs)} scenes to process in {input_root}.")
+    print(f"[DEBUG] Output root is {output_root} (cwd: {os.getcwd()})")
 
     # Batch processing
     batch_size = args.batch_size
     for batch_start in range(0, len(scene_dirs), batch_size):
+        print(f"[DEBUG] Starting batch at index {batch_start}")
         batch_scene_dirs = scene_dirs[batch_start:batch_start+batch_size]
         batch_imgs = []
         batch_views = []
@@ -183,6 +185,7 @@ def main():
         batch_scene_names = []
         batch_H, batch_W = None, None
         for scene_dir in batch_scene_dirs:
+            print(f"[DEBUG] Processing scene_dir: {scene_dir}")
             # Find input images or video in uuid_dir
             img_paths = []
             for ext in ["*.jpeg", "*.jpg", "*.png", "*.webp"]:
@@ -192,14 +195,16 @@ def main():
                 # Try video
                 for file in scene_dir.iterdir():
                     if file.suffix.lower() in video_exts:
+                        print(f"[DEBUG] Found video file: {file}")
                         # Extract frames
                         input_frames_dir = scene_dir / "input_frames"
                         input_frames_dir.mkdir(exist_ok=True)
                         img_paths = select_frames_by_camera_poses(str(file), n=10, output_dir=str(input_frames_dir))
                         img_paths = sorted(img_paths)
                         break
+            print(f"[DEBUG] img_paths for scene_dir {scene_dir}: {img_paths}")
             if not img_paths:
-                print(f"No images or video found in {scene_dir}, skipping.")
+                print(f"[DEBUG] No images or video found in {scene_dir}, skipping.")
                 continue
             imgs = prepare_images_to_tensor(img_paths, target_size=args.target_size, resize_strategy="crop").to(device)
             batch_imgs.append(imgs)
@@ -210,6 +215,7 @@ def main():
                 batch_H, batch_W = imgs.shape[-2], imgs.shape[-1]
 
         if not batch_imgs:
+            print(f"[DEBUG] No valid images found in batch starting at {batch_start}, skipping batch.")
             continue
 
         # Stack for batch
@@ -218,7 +224,7 @@ def main():
         B, S, C, H, W = imgs_batch.shape
         cond_flags = [0, 0, 0]
 
-        print(f"Processing batch of {B} scenes, {S} views each.")
+        print(f"[DEBUG] Processing batch of {B} scenes, {S} views each.")
         # Inference
         with torch.no_grad():
             use_amp = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
@@ -231,10 +237,12 @@ def main():
             scene_uuid = scene_dir.name
             parent_dir = scene_dir.parent.name
             outdir = output_root / parent_dir / scene_uuid
+            print(f"[DEBUG] Creating output directory: {outdir}")
             outdir.mkdir(parents=True, exist_ok=True)
 
             # Save input frames
             input_frames_dir = outdir / "input_frames"
+            print(f"[DEBUG] Creating input_frames directory: {input_frames_dir}")
             input_frames_dir.mkdir(exist_ok=True)
             for i, img_path in enumerate(batch_img_paths[bidx]):
                 fname = f"image_{i+1:04d}.png"
@@ -243,6 +251,7 @@ def main():
 
             # Save incremental splats and renders
             if "splats" in predictions_batch and args.save_gs:
+                print(f"[DEBUG] Saving incremental splats for {scene_uuid}")
                 model.gs_renderer.voxel_size = 0.002
                 save_incremental_splats_and_render(
                     predictions_batch["splats"],
@@ -257,14 +266,18 @@ def main():
                     cam_poses=predictions_batch.get('camera_poses'),
                     cam_intrs=predictions_batch.get('camera_intrs'),
                 )
+            else:
+                print(f"[DEBUG] No splats found or save_gs not set for {scene_uuid}")
 
             # Save predicted camera poses
             if "camera_poses" in predictions_batch:
                 cam_poses = predictions_batch["camera_poses"][bidx].detach().cpu().numpy()  # [S, 4, 4]
                 np.save(outdir / "predicted_camera_poses.npy", cam_poses)
+                print(f"[DEBUG] Saved predicted_camera_poses.npy for {scene_uuid}")
             if "camera_intrs" in predictions_batch:
                 cam_intrs = predictions_batch["camera_intrs"][bidx].detach().cpu().numpy()  # [S, 3, 3]
                 np.save(outdir / "predicted_camera_intrs.npy", cam_intrs)
+                print(f"[DEBUG] Saved predicted_camera_intrs.npy for {scene_uuid}")
 
             # Optionally, save other outputs (depth, normals, etc.) as needed
 
