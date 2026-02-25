@@ -501,9 +501,9 @@ def save_incremental_splats_and_render(
             if key in splats:
                 splat_entry = splats[key]
                 if isinstance(splat_entry, list):
-                    filtered_splats[key] = splat_entry[0][mask].clone()
+                    filtered_splats[key] = splat_entry[0][mask]
                 elif isinstance(splat_entry, torch.Tensor) and splat_entry.ndim >= 2:
-                    filtered_splats[key] = splat_entry[0][mask].clone()
+                    filtered_splats[key] = splat_entry[0][mask]
                 else:
                     filtered_splats[key] = splat_entry
         filtered_splats_batched = {}
@@ -515,34 +515,33 @@ def save_incremental_splats_and_render(
         if final_mask_tensor is not None:
             means = filtered_splats_batched["means"][0]            # [N, 3]
             view_mapping = filtered_splats_batched["view_mapping"][0]  # [N]
-
             N = means.shape[0]
 
-            # ---- Gather per-splat camera pose & intrinsics ----
-            c2w_all = cam_poses[0]          # [S, 4, 4]
-            K_all = cam_intrs[0]            # [S, 3, 3]
+            # ---- Precompute per-view transforms ONCE ----
+            c2w_all = cam_poses[0]       # [S, 4, 4]
+            K_all = cam_intrs[0]         # [S, 3, 3]
 
-            c2w = c2w_all[view_mapping]     # [N, 4, 4]
-            K = K_all[view_mapping]         # [N, 3, 3]
+            # Invert once per view (S is small)
+            w2c_all = torch.inverse(c2w_all)  # [S, 4, 4]
 
-            # ---- Convert to homogeneous ----
+            # Gather per-splat camera matrices
+            w2c = w2c_all[view_mapping]   # [N, 4, 4]
+            K = K_all[view_mapping]       # [N, 3, 3]
+
+            # ---- Homogeneous coords ----
             ones = torch.ones((N, 1), device=means.device)
-            pts_h = torch.cat([means, ones], dim=1)                # [N, 4]
+            pts_h = torch.cat([means, ones], dim=1)  # [N, 4]
 
             # ---- World → Camera ----
-            w2c = torch.inverse(c2w)                                # [N, 4, 4]
-            pts_cam = torch.bmm(w2c, pts_h.unsqueeze(-1)).squeeze(-1)  # [N, 4]
-
+            pts_cam = torch.bmm(w2c, pts_h.unsqueeze(-1)).squeeze(-1)
             z = pts_cam[:, 2]
 
             # ---- Camera → Image ----
-            pts_cam3 = pts_cam[:, :3]
-            uvw = torch.bmm(K, pts_cam3.unsqueeze(-1)).squeeze(-1)  # [N, 3]
+            uvw = torch.bmm(K, pts_cam[:, :3].unsqueeze(-1)).squeeze(-1)
 
             x = uvw[:, 0] / (uvw[:, 2] + 1e-8)
             y = uvw[:, 1] / (uvw[:, 2] + 1e-8)
 
-            # ---- Validity checks ----
             valid = (
                 (z > 0) &
                 (x >= 0) & (x < W) &
@@ -552,18 +551,15 @@ def save_incremental_splats_and_render(
             x_int = x.long().clamp(0, W - 1)
             y_int = y.long().clamp(0, H - 1)
 
-            # ---- Sky mask lookup (vectorized) ----
             mask_values = final_mask_tensor[
                 view_mapping,
                 y_int,
                 x_int
-            ]  # [N]
+            ]
 
             keep_mask = valid & mask_values
-
             keep_indices = torch.where(keep_mask)[0]
 
-            # ---- Apply filtering ----
             for key in ["means", "quats", "scales", "opacities", "sh", "weights", "view_mapping"]:
                 if key in filtered_splats_batched:
                     tensor = filtered_splats_batched[key][0]
@@ -589,7 +585,7 @@ def save_incremental_splats_and_render(
                         curr_K = pruned_for_save["means"].shape[0]
                         prev_K = prev_pruned_for_save["means"].shape[0] if prev_pruned_for_save is not None else 0
                         num_new_splats = max(0, curr_K - prev_K)
-                        delta_mask = mask_involve_new_view.clone()
+                        delta_mask = mask_involve_new_view
                         if num_new_splats > 0:
                             delta_mask[-num_new_splats:] = True
                         delta_indices = torch.where(delta_mask)[0]
