@@ -564,7 +564,14 @@ def save_incremental_splats_and_render(
         # Only save delta splats for each step
         if save_ply and end_view > 0:
             ply_path_delta = incremental_dir / f"splats_delta_{end_view - 1}to{end_view}.ply"
-            if delta_indices is not None and len(delta_indices) > 0:
+            if end_view == 1:
+                # For the first step, save all splats present at this step as the delta
+                means_delta = pruned_for_save["means"]
+                scales_delta = pruned_for_save["scales"]
+                quats_delta = pruned_for_save["quats"]
+                colors_delta = pruned_for_save["sh"] if "sh" in pruned_for_save else torch.ones_like(means_delta)
+                opacities_delta = pruned_for_save["opacities"]
+            elif delta_indices is not None and len(delta_indices) > 0:
                 means_delta = pruned_for_save["means"][delta_indices]
                 scales_delta = pruned_for_save["scales"][delta_indices]
                 quats_delta = pruned_for_save["quats"][delta_indices]
