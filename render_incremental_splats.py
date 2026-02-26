@@ -102,41 +102,25 @@ def render_incremental_from_deltas(output_dir, H, W):
         sh = torch.cat(cumulative["sh"], dim=0).to(device)
 
         # Normalize and assert splat values before rendering
-        means = means.reshape(-1, 3).unsqueeze(0)
-        scales = scales.reshape(-1, 3).unsqueeze(0)
-        quats = quats.reshape(-1, 4).unsqueeze(0)
-        opacities = opacities.reshape(-1).unsqueeze(0)
-        sh = sh.reshape(-1, 3).unsqueeze(0)
+        means = means.reshape(-1, 3)
+        scales = scales.reshape(-1, 3)
+        quats = quats.reshape(-1, 4)
+        opacities = opacities.reshape(-1)
+        sh = sh.reshape(-1, 3)
         
         # Assert shapes
-        assert means.shape[1] == scales.shape[1] == quats.shape[1] == opacities.shape[1] == sh.shape[1], "Splat parameter counts must match"
-        assert means.shape[2] == 3, "Means must have shape [1, N, 3]"
-        assert scales.shape[2] == 3, "Scales must have shape [1, N, 3]"
-        assert quats.shape[2] == 4, "Quats must have shape [1, N, 4]"
-        assert opacities.shape[0] == 1, "Opacities must have batch dim"
-        assert sh.shape[2] == 3, "SH must have shape [1, N, 3]"
+        N = means.shape[0]
+        assert scales.shape[0] == N and scales.shape[1] == 3, "Scales must have shape [N, 3]"
+        assert quats.shape[0] == N and quats.shape[1] == 4, "Quats must have shape [N, 4]"
+        assert opacities.shape[0] == N, "Opacities must have shape [N]"
+        assert sh.shape[0] == N and sh.shape[1] == 3, "SH must have shape [N, 3]"
 
         # Reshape SH to [1, N, num_sh_coeffs, 3]
         num_sh_coeffs = (gs_renderer.sh_degree + 1) ** 2
-        N = means.shape[1]
         # Expand SH to [N, num_sh_coeffs, 3] for rasterizer
-        if sh.shape == (1, N, 3):
-            sh_expanded = torch.zeros((N, num_sh_coeffs, 3), device=sh.device, dtype=sh.dtype)
-            sh_expanded[:, 0, :] = sh[0]
-            colors_arg = sh_expanded
-        elif sh.shape == (1, N, num_sh_coeffs, 3):
-            colors_arg = sh[0]
-        elif sh.shape == (N, 3):
-            sh_expanded = torch.zeros((N, num_sh_coeffs, 3), device=sh.device, dtype=sh.dtype)
-            sh_expanded[:, 0, :] = sh
-            colors_arg = sh_expanded
-        elif sh.shape == (N, num_sh_coeffs, 3):
-            colors_arg = sh
-        elif sh.shape == (N, 1, 3):
-            # Remove extra dim if present
-            colors_arg = sh.squeeze(1)
-        else:
-            raise AssertionError(f"SH shape not recognized: {sh.shape}, expected [N, num_sh_coeffs, 3]")
+        sh_expanded = torch.zeros((N, num_sh_coeffs, 3), device=sh.device, dtype=sh.dtype)
+        sh_expanded[:, 0, :] = sh
+        colors_arg = sh_expanded
         sh_degree = gs_renderer.sh_degree if gs_renderer.sh_degree > 0 else None
 
         # Load camera subset for this step
