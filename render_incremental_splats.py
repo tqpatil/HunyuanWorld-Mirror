@@ -101,38 +101,21 @@ def render_incremental_from_deltas(output_dir, H, W):
         opacities = torch.cat(cumulative["opacities"], dim=0).to(device)
         sh = torch.cat(cumulative["sh"], dim=0).to(device)
 
-        # Reshape splat parameters to match reference before unsqueezing
-        means = means.reshape(-1, 3)
-        scales = scales.reshape(-1, 3)
-        quats = quats.reshape(-1, 4)
-        opacities = opacities.reshape(-1)
-        sh = sh.reshape(-1, 3)
-
-        # Prepare splats with batch dimension
-        means = means.unsqueeze(0)
-        scales = scales.unsqueeze(0)
-        quats = quats.unsqueeze(0)
-        opacities = opacities.unsqueeze(0)
-        sh = sh.unsqueeze(0)
+        # Reshape splat parameters to [1, N, ...] for renderer
+        means = means.reshape(-1, 3).unsqueeze(0)
+        scales = scales.reshape(-1, 3).unsqueeze(0)
+        quats = quats.reshape(-1, 4).unsqueeze(0)
+        opacities = opacities.reshape(-1).unsqueeze(0)
+        sh = sh.reshape(-1, 3).unsqueeze(0)
         colors_arg = sh
         sh_degree = gs_renderer.sh_degree if gs_renderer.sh_degree > 0 else None
 
-        # --------------------------------------------------------
-        # Load camera subset for this step
-        # --------------------------------------------------------
-        cam_pose_file = incremental_dir / f"camera_poses_0to{step}.npy"
-        cam_intr_file = incremental_dir / f"camera_intrs_0to{step}.npy"
+        # Slice camera poses/intrinsics to correct views
+        V_out = cam_poses.shape[1]
+        cams_c2w = cam_poses[:, :V_out].to(torch.float32)
+        cams_K = cam_intrs[:, :V_out].to(torch.float32)
 
-        if not cam_pose_file.exists():
-            print(f"Missing camera file for step {step}")
-            continue
-
-        cam_poses = torch.from_numpy(np.load(cam_pose_file)).unsqueeze(0).to(device)
-        cam_intrs = torch.from_numpy(np.load(cam_intr_file)).unsqueeze(0).to(device)
-
-        # --------------------------------------------------------
         # Render
-        # --------------------------------------------------------
         try:
             render_colors, render_depths, _ = gs_renderer.rasterizer.rasterize_batches(
                 means,
@@ -140,8 +123,8 @@ def render_incremental_from_deltas(output_dir, H, W):
                 scales,
                 opacities,
                 colors_arg,
-                cam_poses.float(),
-                cam_intrs.float(),
+                cams_c2w,
+                cams_K,
                 width=W,
                 height=H,
                 sh_degree=sh_degree,
@@ -153,7 +136,6 @@ def render_incremental_from_deltas(output_dir, H, W):
             V_out = render_colors.shape[1]
 
             for v in range(V_out):
-
                 rgb = render_colors[0, v].clamp(0, 1)
                 rgb_img = (rgb * 255).round().to(torch.uint8).cpu().numpy()
                 Image.fromarray(rgb_img).save(
