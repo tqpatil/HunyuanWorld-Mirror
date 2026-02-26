@@ -118,10 +118,22 @@ def render_incremental_from_deltas(output_dir, H, W):
 
         # Reshape SH to [1, N, num_sh_coeffs, 3]
         num_sh_coeffs = (gs_renderer.sh_degree + 1) ** 2
-        if sh.ndim == 2:
-            sh = sh.reshape(-1, num_sh_coeffs, 3)  # [N, num_sh_coeffs, 3]
-        sh = sh.unsqueeze(0)  # [1, N, num_sh_coeffs, 3]
-
+        N = means.shape[1]
+        # If SH is only DC ([1, N, 3]), expand to [1, N, num_sh_coeffs, 3] and fill higher bands with zeros
+        if sh.shape == (1, N, 3):
+            sh_expanded = torch.zeros((1, N, num_sh_coeffs, 3), device=sh.device, dtype=sh.dtype)
+            sh_expanded[:, :, 0, :] = sh[0]
+            sh = sh_expanded
+        elif sh.shape == (1, N, num_sh_coeffs, 3):
+            pass  # Already correct
+        elif sh.shape == (N, 3):
+            sh_expanded = torch.zeros((N, num_sh_coeffs, 3), device=sh.device, dtype=sh.dtype)
+            sh_expanded[:, 0, :] = sh
+            sh = sh_expanded.unsqueeze(0)
+        elif sh.shape == (N, num_sh_coeffs, 3):
+            sh = sh.unsqueeze(0)
+        else:
+            raise AssertionError(f"SH shape not recognized: {sh.shape}, expected [1, N, num_sh_coeffs, 3]")
         colors_arg = sh
         sh_degree = gs_renderer.sh_degree if gs_renderer.sh_degree > 0 else None
 
