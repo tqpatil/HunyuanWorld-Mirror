@@ -132,6 +132,9 @@ def render_incremental_from_deltas(output_dir, H, W):
             colors_arg = sh_expanded
         elif sh.shape == (N, num_sh_coeffs, 3):
             colors_arg = sh
+        elif sh.shape == (N, 1, 3):
+            # Remove extra dim if present
+            colors_arg = sh.squeeze(1)
         else:
             raise AssertionError(f"SH shape not recognized: {sh.shape}, expected [N, num_sh_coeffs, 3]")
         sh_degree = gs_renderer.sh_degree if gs_renderer.sh_degree > 0 else None
