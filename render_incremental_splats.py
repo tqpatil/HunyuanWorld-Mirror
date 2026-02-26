@@ -101,6 +101,17 @@ def render_incremental_from_deltas(output_dir, H, W):
         opacities = torch.cat(cumulative["opacities"], dim=0).to(device)
         sh = torch.cat(cumulative["sh"], dim=0).to(device)
 
+        # Load camera subset for this step
+        cam_pose_file = incremental_dir / f"camera_poses_0to{step}.npy"
+        cam_intr_file = incremental_dir / f"camera_intrs_0to{step}.npy"
+
+        if not cam_pose_file.exists():
+            print(f"Missing camera file for step {step}")
+            continue
+
+        cam_poses = torch.from_numpy(np.load(cam_pose_file)).unsqueeze(0).to(device)
+        cam_intrs = torch.from_numpy(np.load(cam_intr_file)).unsqueeze(0).to(device)
+
         # Reshape splat parameters to [1, N, ...] for renderer
         means = means.reshape(-1, 3).unsqueeze(0)
         scales = scales.reshape(-1, 3).unsqueeze(0)
