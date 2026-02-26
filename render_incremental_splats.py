@@ -107,7 +107,7 @@ def render_incremental_from_deltas(output_dir, H, W):
         quats = quats.reshape(-1, 4).unsqueeze(0)
         opacities = opacities.reshape(-1).unsqueeze(0)
         sh = sh.reshape(-1, 3).unsqueeze(0)
-
+        
         # Assert shapes
         assert means.shape[1] == scales.shape[1] == quats.shape[1] == opacities.shape[1] == sh.shape[1], "Splat parameter counts must match"
         assert means.shape[2] == 3, "Means must have shape [1, N, 3]"
@@ -115,6 +115,12 @@ def render_incremental_from_deltas(output_dir, H, W):
         assert quats.shape[2] == 4, "Quats must have shape [1, N, 4]"
         assert opacities.shape[0] == 1, "Opacities must have batch dim"
         assert sh.shape[2] == 3, "SH must have shape [1, N, 3]"
+
+        # Reshape SH to [1, N, num_sh_coeffs, 3]
+        num_sh_coeffs = sh.shape[1] // means.shape[1] if sh.ndim == 2 else 1
+        if sh.ndim == 2:
+            sh = sh.reshape(means.shape[1], num_sh_coeffs, 3)
+        sh = sh.unsqueeze(0)  # [1, N, num_sh_coeffs, 3]
 
         colors_arg = sh
         sh_degree = gs_renderer.sh_degree if gs_renderer.sh_degree > 0 else None
@@ -157,20 +163,15 @@ def render_incremental_from_deltas(output_dir, H, W):
 
             for v in range(V_out):
                 rgb = render_colors[0, v].clamp(0, 1)
-                rgb = rgb.pow(1.0 / 2.2)  # sRGB gamma correction
-                rgb_img = (rgb * 255).round().to(torch.uint8).cpu().numpy()
-                Image.fromarray(rgb_img).save(
-                    renders_dir / f"render_view_{v:02d}_rgb.png"
-                )
+                rgb_img = (rgb * 255).to(torch.uint8).cpu().numpy()
+                Image.fromarray(rgb_img).save(str(renders_dir / f"render_view_{v:02d}_rgb.png"))
 
                 depth = render_depths[0, v, :, :, 0].clamp(0, None)
-                depth_norm = (depth - depth.min()) / (depth.max() - depth.min() + 1e-8)
-                depth_img = (depth_norm * 255).round().to(torch.uint8).cpu().numpy()
-                Image.fromarray(depth_img).save(
-                    renders_dir / f"render_view_{v:02d}_depth.png"
-                )
+                depth_normalized = (depth - depth.min()) / (depth.max() - depth.min() + 1e-8)
+                depth_img = (depth_normalized * 255).to(torch.uint8).cpu().numpy()
+                Image.fromarray(depth_img).save(str(renders_dir / f"render_view_{v:02d}_depth.png"))
 
-                print(f"   Rendered view {v}")
+                print(f"    ✅ Rendered view {v}")
 
         except Exception as e:
             print(f"Failed rendering step {step}: {e}")
