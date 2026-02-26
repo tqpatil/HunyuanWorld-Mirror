@@ -102,11 +102,11 @@ def render_incremental_from_deltas(output_dir, H, W):
         sh = torch.cat(cumulative["sh"], dim=0).to(device)
 
         # Normalize and assert splat values before rendering
-        means = means.reshape(-1, 3)
-        scales = scales.reshape(-1, 3)
-        quats = quats.reshape(-1, 4)
-        opacities = opacities.reshape(-1)
-        sh = sh.reshape(-1, 3)
+        means = means.reshape(-1, 3).unsqueeze(0)
+        scales = scales.reshape(-1, 3).unsqueeze(0)
+        quats = quats.reshape(-1, 4).unsqueeze(0)
+        opacities = opacities.reshape(-1).unsqueeze(0)
+        sh = sh.reshape(-1, 3).unsqueeze(0)
         
         # Assert shapes
         N = means.shape[0]
@@ -117,9 +117,9 @@ def render_incremental_from_deltas(output_dir, H, W):
 
         # Reshape SH to [1, N, num_sh_coeffs, 3]
         num_sh_coeffs = (gs_renderer.sh_degree + 1) ** 2
-        # Expand SH to [N, num_sh_coeffs, 3] for rasterizer
-        sh_expanded = torch.zeros((N, num_sh_coeffs, 3), device=sh.device, dtype=sh.dtype)
-        sh_expanded[:, 0, :] = sh
+        # Expand SH to [1, N, num_sh_coeffs, 3] for rasterizer
+        sh_expanded = torch.zeros((1, N, num_sh_coeffs, 3), device=sh.device, dtype=sh.dtype)
+        sh_expanded[:, :, 0, :] = sh
         colors_arg = sh_expanded
         sh_degree = gs_renderer.sh_degree if gs_renderer.sh_degree > 0 else None
 
