@@ -71,17 +71,29 @@ def main():
             inc_dir_name = inc_dir.name
             renders_dir = save_root / inc_dir_name / f"renders_views_0to{step+1}"
             renders_dir.mkdir(parents=True, exist_ok=True)
-            # Prepare splat tensors as in save_incremental_splats_and_render
-            means_t = means.unsqueeze(0) if means.ndim == 2 else means
-            quats_t = quats.unsqueeze(0) if quats.ndim == 2 else quats
-            scales_t = scales.unsqueeze(0) if scales.ndim == 2 else scales
-            opacities_t = opacities.unsqueeze(0) if opacities.ndim == 1 else opacities
-            sh_t = sh.unsqueeze(0) if sh.ndim == 3 else (sh.unsqueeze(0).unsqueeze(2) if sh.ndim == 2 else sh)
+            # --- Match reference rendering process exactly ---
+            pruned_splats = {
+                "means": means,
+                "quats": quats,
+                "scales": scales,
+                "opacities": opacities,
+                "sh": sh
+            }
+            means_r = pruned_splats["means"].unsqueeze(0) if pruned_splats["means"].ndim == 2 else pruned_splats["means"]  # [1, N, 3/4]
+            quats_r = pruned_splats["quats"].unsqueeze(0) if pruned_splats["quats"].ndim == 2 else pruned_splats["quats"]  # [1, N, 4]
+            scales_r = pruned_splats["scales"].unsqueeze(0) if pruned_splats["scales"].ndim == 2 else pruned_splats["scales"]  # [1, N, 3]
+            opacities_r = pruned_splats["opacities"].unsqueeze(0) if pruned_splats["opacities"].ndim == 1 else pruned_splats["opacities"]  # [1, N]
+            sh_r = pruned_splats["sh"].unsqueeze(0) if pruned_splats["sh"].ndim == 3 else pruned_splats["sh"]  # [1, N, num_sh_coeffs, 3]
             try:
+                cams_c2w = cam_poses_torch.to(torch.float32)
+                cams_K = cam_intrs_torch.to(torch.float32)
+                colors_arg = sh_r if "sh" in pruned_splats else pruned_splats.get("colors")
                 render_colors, render_depths, _ = gs_renderer.rasterizer.rasterize_batches(
-                    means_t, quats_t, scales_t, opacities_t,
-                    sh_t, cam_poses_torch, cam_intrs_torch,
-                    width=W, height=H, sh_degree=gs_renderer.sh_degree
+                    means_r, quats_r, scales_r, opacities_r,
+                    colors_arg,
+                    cams_c2w, cams_K,
+                    width=W, height=H,
+                    sh_degree=gs_renderer.sh_degree if "sh" in pruned_splats else None,
                 )
                 V_out = render_colors.shape[1]
                 for v in range(V_out):
