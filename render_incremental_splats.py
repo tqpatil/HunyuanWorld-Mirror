@@ -1,15 +1,5 @@
 import argparse
-def main():
-    parser = argparse.ArgumentParser(description="Render incremental splats from saved directory.")
-    parser.add_argument("--splats_dir", type=str, required=True, help="Directory containing splats saved by save_incremental_splats (parent of incremental_splats)")
-    parser.add_argument("--height", type=int, required=True, help="Image height (H)")
-    parser.add_argument("--width", type=int, required=True, help="Image width (W)")
-    args = parser.parse_args()
 
-    render_incremental_from_deltas(args.splats_dir, args.height, args.width)
-
-if __name__ == "__main__":
-    main()
 import torch
 import numpy as np
 from pathlib import Path
@@ -184,3 +174,14 @@ def render_incremental_from_deltas(output_dir, H, W):
             traceback.print_exc()
 
     print("\nAll incremental renders complete.")
+def main():
+    parser = argparse.ArgumentParser(description="Render incremental splats from saved directory.")
+    parser.add_argument("--splats_dir", type=str, required=True, help="Directory containing splats saved by save_incremental_splats (parent of incremental_splats)")
+    parser.add_argument("--height", type=int, required=True, help="Image height (H)")
+    parser.add_argument("--width", type=int, required=True, help="Image width (W)")
+    args = parser.parse_args()
+
+    render_incremental_from_deltas(args.splats_dir, args.height, args.width)
+
+if __name__ == "__main__":
+    main()
