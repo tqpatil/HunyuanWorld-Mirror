@@ -115,19 +115,18 @@ def render_incremental_from_deltas(output_dir, H, W):
         cam_intrs = torch.from_numpy(np.load(cam_intr_file)).unsqueeze(0).to(device)
 
         # --------------------------------------------------------
-        # Prepare splats with batch dimension
+        # Prepare splats with batch dimension and apply SH/opacity transforms to match render_interpolated_video
         # --------------------------------------------------------
         means = means.unsqueeze(0)
         scales = scales.unsqueeze(0)
         quats = quats.unsqueeze(0)
-        opacities = opacities.unsqueeze(0)
+        # Opacity transform: logit(clamp(opacity, 1e-6, 1-1e-6))
+        opacities = torch.logit(torch.clamp(opacities, 1e-6, 1-1e-6)).unsqueeze(0)
 
-        if gs_renderer.sh_degree > 0:
-            colors_arg = sh.unsqueeze(0)
-            sh_degree = gs_renderer.sh_degree
-        else:
-            colors_arg = sh.unsqueeze(0)
-            sh_degree = None
+        # SH transform: just unsqueeze for now (if you want to split sh0/shN, add here)
+        sh = sh.unsqueeze(0)
+        colors_arg = sh
+        sh_degree = gs_renderer.sh_degree if gs_renderer.sh_degree > 0 else None
 
         # --------------------------------------------------------
         # Render
@@ -154,14 +153,14 @@ def render_incremental_from_deltas(output_dir, H, W):
             for v in range(V_out):
 
                 rgb = render_colors[0, v].clamp(0, 1)
-                rgb_img = (rgb * 255).to(torch.uint8).cpu().numpy()
+                rgb_img = (rgb * 255).round().to(torch.uint8).cpu().numpy()
                 Image.fromarray(rgb_img).save(
                     renders_dir / f"render_view_{v:02d}_rgb.png"
                 )
 
                 depth = render_depths[0, v, :, :, 0].clamp(0, None)
                 depth_norm = (depth - depth.min()) / (depth.max() - depth.min() + 1e-8)
-                depth_img = (depth_norm * 255).to(torch.uint8).cpu().numpy()
+                depth_img = (depth_norm * 255).round().to(torch.uint8).cpu().numpy()
                 Image.fromarray(depth_img).save(
                     renders_dir / f"render_view_{v:02d}_depth.png"
                 )
