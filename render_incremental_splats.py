@@ -31,67 +31,67 @@ def main():
     # Find all incremental_splats directories recursively
     for inc_dir in output_root.rglob('incremental_splats'):
         print(f"Processing {inc_dir}")
-        # Find all cumulative splat PLYs and their camera pose/intrinsics
         ply_files = sorted(inc_dir.glob("splats_delta_*.ply"))
         if not ply_files:
             print(f"No delta splat files found in {inc_dir}, skipping.")
             continue
-        # Build cumulative splats step by step
         cumulative_splats = {"means": [], "scales": [], "quats": [], "opacities": [], "sh": []}
         num_steps = len(ply_files)
         for step in range(num_steps):
             ply_file = ply_files[step]
-            # Load delta splats
             splats = load_gs_ply(ply_file)
             for k in cumulative_splats:
                 cumulative_splats[k].append(splats[k])
-            # Concatenate all previous splats
             means = torch.cat(cumulative_splats["means"], dim=0)
             scales = torch.cat(cumulative_splats["scales"], dim=0)
             quats = torch.cat(cumulative_splats["quats"], dim=0)
             opacities = torch.cat(cumulative_splats["opacities"], dim=0)
             sh = torch.cat(cumulative_splats["sh"], dim=0)
-            # Load camera poses and intrinsics for this step
             cam_poses_file = inc_dir / f"camera_poses_0to{step+1}.npy"
             cam_intrs_file = inc_dir / f"camera_intrs_0to{step+1}.npy"
             if not cam_poses_file.exists() or not cam_intrs_file.exists():
                 print(f"Missing camera files for step {step+1}, skipping.")
                 continue
-            cam_poses = np.load(cam_poses_file)  # shape: (num_views, 4, 4)
-            cam_intrs = np.load(cam_intrs_file)  # shape: (num_views, 3, 3)
-            # Convert to torch
-            cam_poses_torch = torch.from_numpy(cam_poses).unsqueeze(0)  # [1, V, 4, 4]
-            cam_intrs_torch = torch.from_numpy(cam_intrs).unsqueeze(0)  # [1, V, 3, 3]
-            # Set up renderer
+            cam_poses = np.load(cam_poses_file)
+            cam_intrs = np.load(cam_intrs_file)
+            cam_poses_torch = torch.from_numpy(cam_poses).unsqueeze(0)
+            cam_intrs_torch = torch.from_numpy(cam_intrs).unsqueeze(0)
             gs_renderer = GaussianSplatRenderer(voxel_size=0.002)
-            # Set up save directory in /mnt/temp-data-volume
+            # Directory structure and naming to match save_incremental_splats_and_render
             save_root = Path("/mnt/temp-data-volume/saved_renders")
             save_root.mkdir(parents=True, exist_ok=True)
-            # Use inc_dir name for subfolder
             inc_dir_name = inc_dir.name
             renders_dir = save_root / inc_dir_name / f"renders_views_0to{step+1}"
             renders_dir.mkdir(parents=True, exist_ok=True)
-            # Prepare splat tensors
+            # Prepare splat tensors as in save_incremental_splats_and_render
             means_t = means.unsqueeze(0) if means.ndim == 2 else means
             quats_t = quats.unsqueeze(0) if quats.ndim == 2 else quats
             scales_t = scales.unsqueeze(0) if scales.ndim == 2 else scales
             opacities_t = opacities.unsqueeze(0) if opacities.ndim == 1 else opacities
-            sh_t = sh.unsqueeze(0) if sh.ndim == 2 else sh
-            # Render each view up to step+1
-            render_colors, render_depths, _ = gs_renderer.rasterizer.rasterize_batches(
-                means_t, quats_t, scales_t, opacities_t,
-                sh_t, cam_poses_torch, cam_intrs_torch,
-                width=W, height=H, sh_degree=gs_renderer.sh_degree
-            )
-            V_out = render_colors.shape[1]
-            for v in range(V_out):
-                rgb = render_colors[0, v].clamp(0, 1)
-                rgb_img = (rgb * 255).to(torch.uint8).cpu().numpy()
-                Image.fromarray(rgb_img).save(str(renders_dir / f"render_view_{v:02d}_rgb.png"))
-                depth = render_depths[0, v, :, :, 0].clamp(0, None)
-                depth_normalized = (depth - depth.min()) / (depth.max() - depth.min() + 1e-8)
-                depth_img = (depth_normalized * 255).to(torch.uint8).cpu().numpy()
-                Image.fromarray(depth_img).save(str(renders_dir / f"render_view_{v:02d}_depth.png"))
+            sh_t = sh.unsqueeze(0) if sh.ndim == 3 else (sh.unsqueeze(0).unsqueeze(2) if sh.ndim == 2 else sh)
+            try:
+                render_colors, render_depths, _ = gs_renderer.rasterizer.rasterize_batches(
+                    means_t, quats_t, scales_t, opacities_t,
+                    sh_t, cam_poses_torch, cam_intrs_torch,
+                    width=W, height=H, sh_degree=gs_renderer.sh_degree
+                )
+                V_out = render_colors.shape[1]
+                for v in range(V_out):
+                    try:
+                        rgb = render_colors[0, v].clamp(0, 1)
+                        rgb_img = (rgb * 255).to(torch.uint8).cpu().numpy()
+                        Image.fromarray(rgb_img).save(str(renders_dir / f"render_view_{v:02d}_rgb.png"))
+                        depth = render_depths[0, v, :, :, 0].clamp(0, None)
+                        depth_normalized = (depth - depth.min()) / (depth.max() - depth.min() + 1e-8)
+                        depth_img = (depth_normalized * 255).to(torch.uint8).cpu().numpy()
+                        Image.fromarray(depth_img).save(str(renders_dir / f"render_view_{v:02d}_depth.png"))
+                        print(f"   Rendered view {v}")
+                    except Exception as e:
+                        print(f"  Failed to save render for view {v}: {e}")
+            except Exception as e:
+                print(f" Failed to render views 0..{step+1}: {e}")
+                import traceback
+                traceback.print_exc()
 
 if __name__ == "__main__":
     main()
