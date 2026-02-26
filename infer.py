@@ -57,7 +57,7 @@ def main():
     parser.add_argument("--output_path", type=str, required=True)
     parser.add_argument("--batch_size", type=int, default=1)
     parser.add_argument("--target_size", type=int, default=518)
-    parser.add_argument("--apply_sky_mask", action="store_true", default=True,
+    parser.add_argument("--apply_sky_mask", action="store_true", default=False,
                         help="Remove sky pixels from splats")
 
     args = parser.parse_args()
@@ -134,7 +134,7 @@ def main():
             if args.apply_sky_mask:
                 sky_mask = compute_sky_mask(img_paths, H, W)
             else:
-                sky_mask = np.ones((S, H, W), dtype=bool)
+                sky_mask = None
 
             # Convert to torch for renderer
             final_mask = sky_mask
