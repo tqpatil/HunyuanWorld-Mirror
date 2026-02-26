@@ -101,23 +101,24 @@ def render_incremental_from_deltas(output_dir, H, W):
         opacities = torch.cat(cumulative["opacities"], dim=0).to(device)
         sh = torch.cat(cumulative["sh"], dim=0).to(device)
 
-        # Load camera subset for this step
-        cam_pose_file = incremental_dir / f"camera_poses_0to{step}.npy"
-        cam_intr_file = incremental_dir / f"camera_intrs_0to{step}.npy"
-
-        if not cam_pose_file.exists():
-            print(f"Missing camera file for step {step}")
-            continue
-
-        cam_poses = torch.from_numpy(np.load(cam_pose_file)).unsqueeze(0).to(device)
-        cam_intrs = torch.from_numpy(np.load(cam_intr_file)).unsqueeze(0).to(device)
-
-        # Reshape splat parameters to [1, N, ...] for renderer
+        # Normalize and assert splat values before rendering
         means = means.reshape(-1, 3).unsqueeze(0)
         scales = scales.reshape(-1, 3).unsqueeze(0)
         quats = quats.reshape(-1, 4).unsqueeze(0)
         opacities = opacities.reshape(-1).unsqueeze(0)
         sh = sh.reshape(-1, 3).unsqueeze(0)
+
+        # Assert shapes
+        assert means.shape[1] == scales.shape[1] == quats.shape[1] == opacities.shape[1] == sh.shape[1], "Splat parameter counts must match"
+        assert means.shape[2] == 3, "Means must have shape [1, N, 3]"
+        assert scales.shape[2] == 3, "Scales must have shape [1, N, 3]"
+        assert quats.shape[2] == 4, "Quats must have shape [1, N, 4]"
+        assert opacities.shape[0] == 1, "Opacities must have batch dim"
+        assert sh.shape[2] == 3, "SH must have shape [1, N, 3]"
+
+        # Normalize values
+        opacities = opacities.clamp(0, 1)
+        sh = sh.clamp(0, 1)
         colors_arg = sh
         sh_degree = gs_renderer.sh_degree if gs_renderer.sh_degree > 0 else None
 
