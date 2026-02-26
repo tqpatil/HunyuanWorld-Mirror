@@ -1,3 +1,15 @@
+import argparse
+def main():
+    parser = argparse.ArgumentParser(description="Render incremental splats from saved directory.")
+    parser.add_argument("--splats_dir", type=str, required=True, help="Directory containing splats saved by save_incremental_splats (parent of incremental_splats)")
+    parser.add_argument("--height", type=int, required=True, help="Image height (H)")
+    parser.add_argument("--width", type=int, required=True, help="Image width (W)")
+    args = parser.parse_args()
+
+    render_incremental_from_deltas(args.splats_dir, args.height, args.width)
+
+if __name__ == "__main__":
+    main()
 import torch
 import numpy as np
 from pathlib import Path
@@ -46,6 +58,10 @@ def render_incremental_from_deltas(output_dir, H, W):
 
     output_dir = Path(output_dir)
     incremental_dir = output_dir / "incremental_splats"
+
+    # Set up saved_renders directory at the same level as output_dir
+    saved_renders_dir = output_dir.parent / "saved_renders"
+    saved_renders_dir.mkdir(exist_ok=True)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -140,7 +156,7 @@ def render_incremental_from_deltas(output_dir, H, W):
                 sh_degree=sh_degree,
             )
 
-            renders_dir = incremental_dir / f"renders_views_0to{step}"
+            renders_dir = saved_renders_dir / f"renders_views_0to{step}"
             renders_dir.mkdir(exist_ok=True)
 
             V_out = render_colors.shape[1]
