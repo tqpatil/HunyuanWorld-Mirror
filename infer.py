@@ -9,7 +9,7 @@ import cv2
 from src.models.models.worldmirror import WorldMirror
 from src.utils.inference_utils import prepare_images_to_tensor
 from src.utils.video_utils import select_frames_from_dl3dv
-from src.utils.render_utils import save_incremental_splats_and_render
+from src.utils.render_utils import save_incremental_splats
 from src.utils.visual_util import segment_sky, download_file_from_url
 
 
@@ -144,18 +144,17 @@ def main():
             # -----------------------
             model.gs_renderer.voxel_size = 0.002
 
-            save_incremental_splats_and_render(
-                predictions["splats"],
-                predictions,
-                model.gs_renderer,
-                outdir,
-                H,
-                W,
+            save_incremental_splats(
+                splats=predictions["splats"],
+                predictions=predictions,
+                gs_renderer=model.gs_renderer,
+                output_dir=outdir,
+                H=H,
+                W=W,
                 save_ply=True,
-                save_renders=False,
-                final_mask=final_mask,   # 🔥 SKY FILTER APPLIED HERE
-                cam_poses=predictions['camera_poses'],
-                cam_intrs=predictions['camera_intrs'],
+                final_mask=final_mask,  # Sky filtering applied here
+                cam_poses=predictions["camera_poses"],
+                cam_intrs=predictions["camera_intrs"],
             )
 
             print("Done.")
