@@ -101,6 +101,22 @@ def render_incremental_from_deltas(output_dir, H, W):
         opacities = torch.cat(cumulative["opacities"], dim=0).to(device)
         sh = torch.cat(cumulative["sh"], dim=0).to(device)
 
+        # Reshape splat parameters to match reference before unsqueezing
+        means = means.reshape(-1, 3)
+        scales = scales.reshape(-1, 3)
+        quats = quats.reshape(-1, 4)
+        opacities = opacities.reshape(-1)
+        sh = sh.reshape(-1, 3)
+
+        # Prepare splats with batch dimension
+        means = means.unsqueeze(0)
+        scales = scales.unsqueeze(0)
+        quats = quats.unsqueeze(0)
+        opacities = opacities.unsqueeze(0)
+        sh = sh.unsqueeze(0)
+        colors_arg = sh
+        sh_degree = gs_renderer.sh_degree if gs_renderer.sh_degree > 0 else None
+
         # --------------------------------------------------------
         # Load camera subset for this step
         # --------------------------------------------------------
@@ -113,17 +129,6 @@ def render_incremental_from_deltas(output_dir, H, W):
 
         cam_poses = torch.from_numpy(np.load(cam_pose_file)).unsqueeze(0).to(device)
         cam_intrs = torch.from_numpy(np.load(cam_intr_file)).unsqueeze(0).to(device)
-
-        # --------------------------------------------------------
-        # Prepare splats with batch dimension (no logit/log transform, match default video rendering)
-        # --------------------------------------------------------
-        means = means.unsqueeze(0)
-        scales = scales.unsqueeze(0)
-        quats = quats.unsqueeze(0)
-        opacities = opacities.unsqueeze(0)
-        sh = sh.unsqueeze(0)
-        colors_arg = sh
-        sh_degree = gs_renderer.sh_degree if gs_renderer.sh_degree > 0 else None
 
         # --------------------------------------------------------
         # Render
