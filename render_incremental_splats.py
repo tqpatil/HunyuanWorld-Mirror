@@ -115,12 +115,15 @@ def render_incremental_from_deltas(output_dir, H, W):
         cam_intrs = torch.from_numpy(np.load(cam_intr_file)).unsqueeze(0).to(device)
 
         # --------------------------------------------------------
-        # Prepare splats with batch dimension (no logit/log transform, match default video rendering)
+        # Prepare splats with batch dimension and apply SH/opacity transforms to match render_interpolated_video
         # --------------------------------------------------------
         means = means.unsqueeze(0)
         scales = scales.unsqueeze(0)
         quats = quats.unsqueeze(0)
-        opacities = opacities.unsqueeze(0)
+        # Opacity transform: logit(clamp(opacity, 1e-6, 1-1e-6))
+        opacities = torch.logit(torch.clamp(opacities, 1e-6, 1-1e-6)).unsqueeze(0)
+
+        # SH transform: just unsqueeze for now (if you want to split sh0/shN, add here)
         sh = sh.unsqueeze(0)
         colors_arg = sh
         sh_degree = gs_renderer.sh_degree if gs_renderer.sh_degree > 0 else None
