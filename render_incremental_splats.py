@@ -116,6 +116,9 @@ def render_incremental_from_deltas(output_dir, H, W):
         assert opacities.shape[0] == 1, "Opacities must have batch dim"
         assert sh.shape[2] == 3, "SH must have shape [1, N, 3]"
 
+        # Normalize values
+        opacities = opacities.clamp(0, 1)
+        sh = sh.clamp(0, 1)
         colors_arg = sh
         sh_degree = gs_renderer.sh_degree if gs_renderer.sh_degree > 0 else None
 
