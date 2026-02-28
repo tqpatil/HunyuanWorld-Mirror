@@ -54,17 +54,9 @@ def main():
                 continue
             cam_poses = np.load(cam_poses_file)
             cam_intrs = np.load(cam_intrs_file)
-            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-            cam_poses_torch = torch.from_numpy(cam_poses).unsqueeze(0).to(device)
-            cam_intrs_torch = torch.from_numpy(cam_intrs).unsqueeze(0).to(device)
-            means = means.to(device)
-            quats = quats.to(device)
-            scales = scales.to(device)
-            opacities = opacities.to(device)
-            sh = sh.to(device)
+            cam_poses_torch = torch.from_numpy(cam_poses).unsqueeze(0)
+            cam_intrs_torch = torch.from_numpy(cam_intrs).unsqueeze(0)
             gs_renderer = GaussianSplatRenderer(voxel_size=0.002)
-            if hasattr(gs_renderer, 'to'):
-                gs_renderer = gs_renderer.to(device)
             # Directory structure and naming to match save_incremental_splats_and_render
             save_root = Path("/mnt/temp-data-volume/saved_renders")
             save_root.mkdir(parents=True, exist_ok=True)
