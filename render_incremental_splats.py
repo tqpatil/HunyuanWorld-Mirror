@@ -119,21 +119,22 @@ def render_incremental_from_deltas(output_dir, H, W):
         # Reshape SH to [1, N, num_sh_coeffs, 3]
         num_sh_coeffs = (gs_renderer.sh_degree + 1) ** 2
         N = means.shape[1]
-        # Expand SH to [N, num_sh_coeffs, 3] for rasterizer
+        # If SH is only DC ([1, N, 3]), expand to [1, N, num_sh_coeffs, 3] and fill higher bands with zeros
         if sh.shape == (1, N, 3):
-            sh_expanded = torch.zeros((N, num_sh_coeffs, 3), device=sh.device, dtype=sh.dtype)
-            sh_expanded[:, 0, :] = sh[0]
-            colors_arg = sh_expanded
+            sh_expanded = torch.zeros((1, N, num_sh_coeffs, 3), device=sh.device, dtype=sh.dtype)
+            sh_expanded[:, :, 0, :] = sh[0]
+            sh = sh_expanded
         elif sh.shape == (1, N, num_sh_coeffs, 3):
-            colors_arg = sh[0]
+            pass  # Already correct
         elif sh.shape == (N, 3):
             sh_expanded = torch.zeros((N, num_sh_coeffs, 3), device=sh.device, dtype=sh.dtype)
             sh_expanded[:, 0, :] = sh
-            colors_arg = sh_expanded
+            sh = sh_expanded.unsqueeze(0)
         elif sh.shape == (N, num_sh_coeffs, 3):
-            colors_arg = sh
+            sh = sh.unsqueeze(0)
         else:
-            raise AssertionError(f"SH shape not recognized: {sh.shape}, expected [N, num_sh_coeffs, 3]")
+            raise AssertionError(f"SH shape not recognized: {sh.shape}, expected [1, N, num_sh_coeffs, 3]")
+        colors_arg = sh
         sh_degree = gs_renderer.sh_degree if gs_renderer.sh_degree > 0 else None
 
         # Load camera subset for this step
