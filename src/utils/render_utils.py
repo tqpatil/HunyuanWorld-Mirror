@@ -441,15 +441,15 @@ def save_incremental_splats(
     # -------------------------------------------------
     # Determine device
     # -------------------------------------------------
-    device = next(
-        (v.device for v in splats.values() if isinstance(v, torch.Tensor) and v.numel() > 0),
-        None
-    )
-    if device is None:
-        device = next(
-            (v[0].device for v in splats.values() if isinstance(v, list) and len(v) > 0 and isinstance(v[0], torch.Tensor)),
-            None
-        )
+    device = None
+    for v in splats.values():
+        if isinstance(v, torch.Tensor) and v.numel() > 0:
+            device = v.device
+            break
+        elif isinstance(v, list) and len(v) > 0 and isinstance(v[0], torch.Tensor):
+            device = v[0].device
+            break
+
     if device is None:
         print("Could not determine device from splats.")
         return
@@ -494,14 +494,17 @@ def save_incremental_splats(
         # Filter splats belonging to 0..end_view
         # -------------------------------------------------
         mask = view_map_b <= end_view
-        filtered_splats = {
-            key: (
-                entry[0][mask] if isinstance(entry, list)
-                else entry[0][mask] if isinstance(entry, torch.Tensor) and entry.ndim >= 2
-                else entry
-            )
-            for key, entry in splats.items() if key in ["means", "quats", "scales", "opacities", "sh", "weights", "view_mapping"]
-        }
+        filtered_splats = {}
+
+        for key in ["means", "quats", "scales", "opacities", "sh", "weights", "view_mapping"]:
+            if key in splats:
+                entry = splats[key]
+                if isinstance(entry, list):
+                    filtered_splats[key] = entry[0][mask]
+                elif isinstance(entry, torch.Tensor) and entry.ndim >= 2:
+                    filtered_splats[key] = entry[0][mask]
+                else:
+                    filtered_splats[key] = entry
 
         # Add batch dimension
         filtered_splats_batched = {
@@ -541,8 +544,8 @@ def save_incremental_splats(
                 (y >= 0) & (y < H)
             )
 
-            x_int = x.round().clamp(0, W - 1).long()
-            y_int = y.round().clamp(0, H - 1).long()
+            x_int = x.long().clamp(0, W - 1)
+            y_int = y.long().clamp(0, H - 1)
 
             mask_values = final_mask_tensor[view_mapping, y_int, x_int]
             keep_mask = valid & mask_values
@@ -550,7 +553,7 @@ def save_incremental_splats(
 
             for key in filtered_splats_batched:
                 tensor = filtered_splats_batched[key][0]
-                filtered_splats_batched[key] = tensor.index_select(0, keep_indices).unsqueeze(0)
+                filtered_splats_batched[key] = tensor[keep_indices].unsqueeze(0)
 
             print(f"Mask-filtered splats: {keep_indices.shape[0]} retained")
 
@@ -561,9 +564,15 @@ def save_incremental_splats(
             filtered_splats_batched,
             voxel_size=gs_renderer.voxel_size
         )
-        pruned = {k: (v[0] if isinstance(v, list) and len(v) > 0 else v) for k, v in pruned.items()}
+
+        pruned = {
+            k: (v[0] if isinstance(v, list) and len(v) > 0 else v)
+            for k, v in pruned.items()
+        }
+
         curr_count = pruned["means"].shape[0]
         print(f"Pruned splats: {curr_count}")
+
         pruned_view_multi = pruned.get("view_mapping_multi", None)
 
         # -------------------------------------------------
@@ -571,17 +580,21 @@ def save_incremental_splats(
         # -------------------------------------------------
         delta_indices = None
         if end_view > 0 and prev_pruned_for_save is not None and pruned_view_multi is not None:
+
             if end_view < pruned_view_multi.shape[1]:
+
                 mask_new_view = pruned_view_multi[:, end_view]
+
                 curr_K = pruned["means"].shape[0]
                 prev_K = prev_pruned_for_save["means"].shape[0]
+
                 num_new = max(0, curr_K - prev_K)
+
+                delta_mask = mask_new_view.clone()
                 if num_new > 0:
-                    delta_mask = mask_new_view.clone()
                     delta_mask[-num_new:] = True
-                    delta_indices = torch.where(delta_mask)[0]
-                else:
-                    delta_indices = torch.where(mask_new_view)[0]
+
+                delta_indices = torch.where(delta_mask)[0]
 
         # -------------------------------------------------
         # Save delta splats
@@ -611,11 +624,11 @@ def save_incremental_splats(
             if means_delta is not None:
                 save_gs_ply(
                     ply_delta,
-                    means_delta.view(-1, 3),
-                    scales_delta.view(-1, 3),
-                    quats_delta.view(-1, 4),
-                    colors_delta.view(-1, 3),
-                    opacities_delta.view(-1),
+                    means_delta.reshape(-1, 3),
+                    scales_delta.reshape(-1, 3),
+                    quats_delta.reshape(-1, 4),
+                    colors_delta.reshape(-1, 3),
+                    opacities_delta.reshape(-1),
                 )
                 print(f"Saved delta splats → {ply_delta.name}")
 
@@ -628,11 +641,11 @@ def save_incremental_splats(
 
             save_gs_ply(
                 ply_final,
-                pruned["means"].view(-1, 3),
-                pruned["scales"].view(-1, 3),
-                pruned["quats"].view(-1, 4),
-                pruned.get("sh", torch.ones_like(pruned["means"])).view(-1, 3),
-                pruned["opacities"].view(-1),
+                pruned["means"].reshape(-1, 3),
+                pruned["scales"].reshape(-1, 3),
+                pruned["quats"].reshape(-1, 4),
+                pruned.get("sh", torch.ones_like(pruned["means"])).reshape(-1, 3),
+                pruned["opacities"].reshape(-1),
             )
 
             print(f"Saved final cumulative splats → {ply_final.name}")
@@ -646,9 +659,15 @@ def save_incremental_splats(
         if cam_poses_all is not None:
             poses_subset = cam_poses_all[:, :end_view+1]
             intrs_subset = cam_intrs_all[:, :end_view+1]
-            poses_np = poses_subset[0].detach().cpu().numpy()
-            intrs_np = intrs_subset[0].detach().cpu().numpy()
-            np.save(incremental_dir / f"camera_poses_0to{end_view}.npy", poses_np)
-            np.save(incremental_dir / f"camera_intrs_0to{end_view}.npy", intrs_np)
+
+            np.save(
+                incremental_dir / f"camera_poses_0to{end_view}.npy",
+                poses_subset[0].detach().cpu().numpy()
+            )
+
+            np.save(
+                incremental_dir / f"camera_intrs_0to{end_view}.npy",
+                intrs_subset[0].detach().cpu().numpy()
+            )
 
         prev_pruned_for_save = pruned.copy()
