@@ -117,11 +117,10 @@ def render_incremental_from_deltas(output_dir, H, W):
 
         # Reshape SH to [1, N, num_sh_coeffs, 3]
         num_sh_coeffs = (gs_renderer.sh_degree + 1) ** 2
-        # Remove batch dimension from sh for expansion
-        sh_no_batch = sh[0] if sh.shape[0] == 1 else sh  # [N, 3]
-        sh_expanded = torch.zeros((N, num_sh_coeffs, 3), device=sh.device, dtype=sh.dtype)
-        sh_expanded[:, 0, :] = sh_no_batch
-        colors_arg = sh_expanded  # [N, num_sh_coeffs, 3]
+        # Expand SH to [1, N, num_sh_coeffs, 3] for rasterizer
+        sh_expanded = torch.zeros((1, N, num_sh_coeffs, 3), device=sh.device, dtype=sh.dtype)
+        sh_expanded[:, :, 0, :] = sh
+        colors_arg = sh_expanded[0]  # [N, num_sh_coeffs, 3]
         sh_degree = gs_renderer.sh_degree if gs_renderer.sh_degree > 0 else None
 
         # Load camera subset for this step
