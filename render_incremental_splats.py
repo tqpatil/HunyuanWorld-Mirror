@@ -109,11 +109,11 @@ def render_incremental_from_deltas(output_dir, H, W):
         sh = sh.reshape(-1, 3).unsqueeze(0)
         
         # Assert shapes
-        N = means.shape[1]
-        assert scales.shape[1] == N and scales.shape[2] == 3, f"Scales must have shape [1, N, 3], got {scales.shape}"
-        assert quats.shape[1] == N and quats.shape[2] == 4, f"Quats must have shape [1, N, 4], got {quats.shape}"
-        assert opacities.shape[1] == N, f"Opacities must have shape [1, N], got {opacities.shape}"
-        assert sh.shape[1] == N and sh.shape[2] == 3, f"SH must have shape [1, N, 3], got {sh.shape}"
+        N = means.shape[0]
+        assert scales.shape[0] == N and scales.shape[1] == 3, "Scales must have shape [N, 3]"
+        assert quats.shape[0] == N and quats.shape[1] == 4, "Quats must have shape [N, 4]"
+        assert opacities.shape[0] == N, "Opacities must have shape [N]"
+        assert sh.shape[0] == N and sh.shape[1] == 3, "SH must have shape [N, 3]"
 
         # Reshape SH to [1, N, num_sh_coeffs, 3]
         num_sh_coeffs = (gs_renderer.sh_degree + 1) ** 2
