@@ -122,17 +122,6 @@ def render_incremental_from_deltas(output_dir, H, W):
         colors_arg = sh
         sh_degree = gs_renderer.sh_degree if gs_renderer.sh_degree > 0 else None
 
-        # Load camera subset for this step
-        cam_pose_file = incremental_dir / f"camera_poses_0to{step}.npy"
-        cam_intr_file = incremental_dir / f"camera_intrs_0to{step}.npy"
-
-        if not cam_pose_file.exists():
-            print(f"Missing camera file for step {step}")
-            continue
-
-        cam_poses = torch.from_numpy(np.load(cam_pose_file)).unsqueeze(0).to(device)
-        cam_intrs = torch.from_numpy(np.load(cam_intr_file)).unsqueeze(0).to(device)
-
         # Slice camera poses/intrinsics to correct views
         V_out = cam_poses.shape[1]
         cams_c2w = cam_poses[:, :V_out].to(torch.float32)
