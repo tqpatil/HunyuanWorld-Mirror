@@ -241,27 +241,7 @@ def main():
             else:
                 # Create dummy sky mask (all True = keep all points)
                 sky_mask = np.ones((S, H, W), dtype=bool)
-            print("\n🔍 Computing filter mask...")
 
-            pts3d_conf_np = predictions["pts3d_conf"][0].detach().cpu().numpy()  # [S,H,W]
-            depth_preds_np = predictions["depth"][0].detach().cpu().numpy()      # [S,H,W,1]
-            normal_preds_np = predictions["normals"][0].detach().cpu().numpy()   # [S,H,W,3]
-
-            final_mask = create_filter_mask(
-                pts3d_conf=pts3d_conf_np,
-                depth_preds=depth_preds_np,
-                normal_preds=normal_preds_np,
-                sky_mask=sky_mask,
-                confidence_percentile=args.confidence_percentile,
-                edge_normal_threshold=args.edge_normal_threshold,
-                edge_depth_threshold=args.edge_depth_threshold,
-                apply_confidence_mask=args.apply_confidence_mask,
-                apply_edge_mask=args.apply_edge_mask,
-                apply_sky_mask=args.apply_sky_mask,
-            )  # [S,H,W] bool
-
-            print(f"  - Kept {final_mask.sum()} / {final_mask.size} pixels "
-                f"({100*final_mask.sum()/final_mask.size:.2f}%)")
             # Save results (mirror output structure)
             print("\n📤 Saving results...")
             images_dir = outdir / "images" # original resolution images
@@ -297,34 +277,28 @@ def main():
 
             # Save pointmap with filtering
             if "pts3d" in predictions and args.save_pointmap:
+                print("Computing filter mask for pointmap...")
+                pts3d_conf_np = predictions["pts3d_conf"][0].detach().cpu().numpy()  # [S, H, W]
+                depth_preds_np = predictions["depth"][0].detach().cpu().numpy()  # [S, H, W, 1]
+                normal_preds_np = predictions["normals"][0].detach().cpu().numpy()  # [S, H, W, 3]
+                final_mask = np.ones(pts3d_conf_np.shape[:3], dtype=bool)  # [S, H, W]
                 pts_list = []
                 pts_colors_list = []
-
                 for i in range(S):
-                    pts = predictions["pts3d"][0, i]                 # [H,W,3]
-                    img_colors = imgs[0, i].permute(1, 2, 0)         # [H,W,3]
+                    pts = predictions["pts3d"][0, i]  # [H,W,3]
+                    img_colors = imgs[0, i].permute(1, 2, 0)  # [H, W, 3]
                     img_colors = (img_colors * 255).to(torch.uint8)
-
                     pts_list.append(pts.reshape(-1, 3))
                     pts_colors_list.append(img_colors.reshape(-1, 3))
-
                 all_pts = torch.cat(pts_list, dim=0)
                 all_colors = torch.cat(pts_colors_list, dim=0)
+                final_mask_flat = final_mask.reshape(-1)
+                final_mask_torch = torch.from_numpy(final_mask_flat).to(all_pts.device)
+                filtered_pts = all_pts[final_mask_torch]
+                filtered_colors = all_colors[final_mask_torch]
+                save_scene_ply(outdir / "pts_from_pointmap.ply", filtered_pts, filtered_colors)
+                print(f"  - Saved {len(filtered_pts)} filtered points to {outdir / 'pts_from_pointmap.ply'}")
 
-                final_mask_flat = torch.from_numpy(
-                    final_mask.reshape(-1)
-                ).to(all_pts.device)
-
-                filtered_pts = all_pts[final_mask_flat]
-                filtered_colors = all_colors[final_mask_flat]
-
-                save_scene_ply(
-                    outdir / "pts_from_pointmap.ply",
-                    filtered_pts,
-                    filtered_colors
-                )
-
-                print(f"  - Saved {len(filtered_pts)} filtered points")
             # Save depthmap
             if "depth" in predictions and args.save_depth:
                 for i in range(S):
@@ -382,8 +356,22 @@ def main():
                 print("Computing filter mask for COLMAP reconstruction...")
                 final_width, final_height = new_width, new_height
                 print(f"colmap_width: {final_width}, colmap_height: {final_height}")
-                filter_mask_frame = torch.from_numpy(final_mask[i]).to(mask.device)
-                valid = mask[0] & filter_mask_frame
+                if not ("pts3d" in predictions and args.save_pointmap):
+                    pts3d_conf_np = predictions["pts3d_conf"][0].detach().cpu().numpy()  # [S, H, W]
+                    depth_preds_np = predictions["depth"][0].detach().cpu().numpy()  # [S, H, W, 1]
+                    normal_preds_np = predictions["normals"][0].detach().cpu().numpy()  # [S, H, W, 3]
+                    final_mask = create_filter_mask(
+                        pts3d_conf=pts3d_conf_np,
+                        depth_preds=depth_preds_np,
+                        normal_preds=normal_preds_np,
+                        sky_mask=sky_mask,
+                        confidence_percentile=args.confidence_percentile,
+                        edge_normal_threshold=args.edge_normal_threshold,
+                        edge_depth_threshold=args.edge_depth_threshold,
+                        apply_confidence_mask=args.apply_confidence_mask,
+                        apply_edge_mask=args.apply_edge_mask,
+                        apply_sky_mask=args.apply_sky_mask,
+                    )  # [S, H, W]
                 e3x4, intr = vector_to_camera_matrices(predictions["camera_params"], image_hw=(final_height, final_width))
                 _, intr_resize = vector_to_camera_matrices(predictions["camera_params"], image_hw=(H, W))
                 extrinsics = e3x4[0] # [S,3,4]
