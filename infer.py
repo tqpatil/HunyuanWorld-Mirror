@@ -65,9 +65,7 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = WorldMirror.from_pretrained("tencent/HunyuanWorld-Mirror").to(device)
     model.eval()
-    model.enable_pts = False
-    model.enable_norm = False
-    
+
     input_root = Path(args.input_path)
     output_root = Path(args.output_path)
 

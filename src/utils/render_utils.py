@@ -513,63 +513,24 @@ def save_incremental_splats_and_render(
             else:
                 filtered_splats_batched[k] = v
         if final_mask_tensor is not None:
-            means = filtered_splats_batched["means"][0]            # [N, 3]
-            view_mapping = filtered_splats_batched["view_mapping"][0]  # [N]
-
-            N = means.shape[0]
-
-            # ---- Gather per-splat camera pose & intrinsics ----
-            c2w_all = cam_poses[0]          # [S, 4, 4]
-            K_all = cam_intrs[0]            # [S, 3, 3]
-
-            c2w = c2w_all[view_mapping]     # [N, 4, 4]
-            K = K_all[view_mapping]         # [N, 3, 3]
-
-            # ---- Convert to homogeneous ----
-            ones = torch.ones((N, 1), device=means.device)
-            pts_h = torch.cat([means, ones], dim=1)                # [N, 4]
-
-            # ---- World → Camera ----
-            w2c = torch.inverse(c2w)                                # [N, 4, 4]
-            pts_cam = torch.bmm(w2c, pts_h.unsqueeze(-1)).squeeze(-1)  # [N, 4]
-
-            z = pts_cam[:, 2]
-
-            # ---- Camera → Image ----
-            pts_cam3 = pts_cam[:, :3]
-            uvw = torch.bmm(K, pts_cam3.unsqueeze(-1)).squeeze(-1)  # [N, 3]
-
-            x = uvw[:, 0] / (uvw[:, 2] + 1e-8)
-            y = uvw[:, 1] / (uvw[:, 2] + 1e-8)
-
-            # ---- Validity checks ----
-            valid = (
-                (z > 0) &
-                (x >= 0) & (x < W) &
-                (y >= 0) & (y < H)
-            )
-
-            x_int = x.long().clamp(0, W - 1)
-            y_int = y.long().clamp(0, H - 1)
-
-            # ---- Sky mask lookup (vectorized) ----
-            mask_values = final_mask_tensor[
-                view_mapping,
-                y_int,
-                x_int
-            ]  # [N]
-
-            keep_mask = valid & mask_values
-
-            keep_indices = torch.where(keep_mask)[0]
-
-            # ---- Apply filtering ----
+            means = filtered_splats_batched["means"][0]
+            view_mapping = filtered_splats_batched["view_mapping"][0]
+            keep_indices = []
+            for i in range(means.shape[0]):
+                view_idx = int(view_mapping[i].item())
+                if view_idx >= cam_poses.shape[1] or view_idx >= cam_intrs.shape[1]:
+                    continue
+                c2w = cam_poses[0, view_idx]
+                K = cam_intrs[0, view_idx]
+                point_3d = means[i].unsqueeze(0)
+                x, y, valid = project_3d_to_2d(point_3d, c2w, K, H, W)
+                if valid[0] and final_mask_tensor[view_idx, int(y[0]), int(x[0])]:
+                    keep_indices.append(i)
             for key in ["means", "quats", "scales", "opacities", "sh", "weights", "view_mapping"]:
                 if key in filtered_splats_batched:
                     tensor = filtered_splats_batched[key][0]
                     filtered_splats_batched[key] = tensor[keep_indices].unsqueeze(0)
-
-            print(f"   Mask-filtered splats: {keep_indices.shape[0]} retained")
+            print(f"   Mask-filtered splats: {len(keep_indices)} retained")
         pruned_for_save = gs_renderer.prune_gs(filtered_splats_batched, voxel_size=gs_renderer.voxel_size)
         pruned_for_save = {k: (v[0] if isinstance(v, list) and len(v) > 0 else v) for k, v in pruned_for_save.items()}
         curr_pruned_count = 0
