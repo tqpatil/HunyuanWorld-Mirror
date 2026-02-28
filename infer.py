@@ -426,5 +426,3 @@ def main():
                 reconstruction.write(str(sparse_dir))
                 save_points_ply(sparse_dir / "points3D.ply", f_pts, f_cols)
                 print(f"  - Saved COLMAP BIN and points3D.ply to {sparse_dir}")
-if __name__ == "__main__":
-    main()
