@@ -156,6 +156,4 @@ def main():
                 cam_intrs=predictions['camera_intrs'],
             )
 
-            print("Done.")
-if __name__ == "__main__":
-    main()
+            print("🎉 Done.")
