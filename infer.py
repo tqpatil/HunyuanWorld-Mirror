@@ -135,7 +135,7 @@ def main():
                 sky_mask = np.ones((S, H, W), dtype=bool)
 
             # Convert to torch for renderer
-            final_mask = sky_mask
+            final_mask = torch.from_numpy(sky_mask).to(device)
 
             # -----------------------
             # Save incremental splats
