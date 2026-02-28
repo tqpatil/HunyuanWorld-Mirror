@@ -117,9 +117,9 @@ def render_incremental_from_deltas(output_dir, H, W):
         assert sh.shape[2] == 3, "SH must have shape [1, N, 3]"
 
         # Reshape SH to [1, N, num_sh_coeffs, 3]
-        num_sh_coeffs = (gs_renderer.sh_degree + 1) ** 2
+        num_sh_coeffs = sh.shape[1] // means.shape[1] if sh.ndim == 2 else 1
         if sh.ndim == 2:
-            sh = sh.reshape(-1, num_sh_coeffs, 3)  # [N, num_sh_coeffs, 3]
+            sh = sh.reshape(means.shape[1], num_sh_coeffs, 3)
         sh = sh.unsqueeze(0)  # [1, N, num_sh_coeffs, 3]
 
         colors_arg = sh
