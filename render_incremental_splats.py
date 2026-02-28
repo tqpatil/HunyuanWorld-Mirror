@@ -32,31 +32,16 @@ def main():
     for inc_dir in output_root.rglob('incremental_splats'):
         print(f"Processing {inc_dir}")
         # Find all cumulative splat PLYs and their camera pose/intrinsics
-        ply_files = sorted(inc_dir.glob("splats_delta_*.ply"))
-        if not ply_files:
-            print(f"No delta splat files found in {inc_dir}, skipping.")
-            continue
-        # Build cumulative splats step by step
-        cumulative_splats = {"means": [], "scales": [], "quats": [], "opacities": [], "sh": []}
-        num_steps = len(ply_files)
-        for step in range(num_steps):
-            ply_file = ply_files[step]
-            # Load delta splats
-            splats = load_gs_ply(ply_file)
-            for k in cumulative_splats:
-                cumulative_splats[k].append(splats[k])
-            # Concatenate all previous splats
-            means = torch.cat(cumulative_splats["means"], dim=0)
-            scales = torch.cat(cumulative_splats["scales"], dim=0)
-            quats = torch.cat(cumulative_splats["quats"], dim=0)
-            opacities = torch.cat(cumulative_splats["opacities"], dim=0)
-            sh = torch.cat(cumulative_splats["sh"], dim=0)
-            # Load camera poses and intrinsics for this step
-            cam_poses_file = inc_dir / f"camera_poses_0to{step+1}.npy"
-            cam_intrs_file = inc_dir / f"camera_intrs_0to{step+1}.npy"
+        for ply_file in sorted(inc_dir.glob("splats_views_0to*.ply")):
+            step = ply_file.stem.split("_0to")[-1]
+            cam_poses_file = inc_dir / f"camera_poses_0to{step}.npy"
+            cam_intrs_file = inc_dir / f"camera_intrs_0to{step}.npy"
             if not cam_poses_file.exists() or not cam_intrs_file.exists():
-                print(f"Missing camera files for step {step+1}, skipping.")
+                print(f"Missing camera files for {ply_file}, skipping.")
                 continue
+            # Load splats
+            splats = load_gs_ply(ply_file)
+            # Load camera poses and intrinsics
             cam_poses = np.load(cam_poses_file)  # shape: (num_views, 4, 4)
             cam_intrs = np.load(cam_intrs_file)  # shape: (num_views, 3, 3)
             # Convert to torch
@@ -64,23 +49,18 @@ def main():
             cam_intrs_torch = torch.from_numpy(cam_intrs).unsqueeze(0)  # [1, V, 3, 3]
             # Set up renderer
             gs_renderer = GaussianSplatRenderer(voxel_size=0.002)
-            # Set up save directory in /mnt/temp-data-volume
-            save_root = Path("/mnt/temp-data-volume/saved_renders")
-            save_root.mkdir(parents=True, exist_ok=True)
-            # Use inc_dir name for subfolder
-            inc_dir_name = inc_dir.name
-            renders_dir = save_root / inc_dir_name / f"renders_views_0to{step+1}"
-            renders_dir.mkdir(parents=True, exist_ok=True)
+            renders_dir = inc_dir / f"renders_views_0to{step}"
+            renders_dir.mkdir(exist_ok=True)
             # Prepare splat tensors
-            means_t = means.unsqueeze(0) if means.ndim == 2 else means
-            quats_t = quats.unsqueeze(0) if quats.ndim == 2 else quats
-            scales_t = scales.unsqueeze(0) if scales.ndim == 2 else scales
-            opacities_t = opacities.unsqueeze(0) if opacities.ndim == 1 else opacities
-            sh_t = sh.unsqueeze(0) if sh.ndim == 2 else sh
-            # Render each view up to step+1
+            means = splats["means"].unsqueeze(0) if splats["means"].ndim == 2 else splats["means"]
+            quats = splats["quats"].unsqueeze(0) if splats["quats"].ndim == 2 else splats["quats"]
+            scales = splats["scales"].unsqueeze(0) if splats["scales"].ndim == 2 else splats["scales"]
+            opacities = splats["opacities"].unsqueeze(0) if splats["opacities"].ndim == 1 else splats["opacities"]
+            sh = splats["sh"].unsqueeze(0) if splats["sh"].ndim == 2 else splats["sh"]
+            # Render each view
             render_colors, render_depths, _ = gs_renderer.rasterizer.rasterize_batches(
-                means_t, quats_t, scales_t, opacities_t,
-                sh_t, cam_poses_torch, cam_intrs_torch,
+                means, quats, scales, opacities,
+                sh, cam_poses_torch, cam_intrs_torch,
                 width=W, height=H, sh_degree=gs_renderer.sh_degree
             )
             V_out = render_colors.shape[1]
@@ -95,4 +75,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
+    print(f"Rendered view {v} for step 0to{step} saved in {renders_dir}")
