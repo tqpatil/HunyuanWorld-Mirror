@@ -157,7 +157,6 @@ def render_incremental_from_deltas(output_dir, H, W):
 
             for v in range(V_out):
                 rgb = render_colors[0, v].clamp(0, 1)
-                rgb = rgb.pow(1.0 / 2.2)  # sRGB gamma correction
                 rgb_img = (rgb * 255).round().to(torch.uint8).cpu().numpy()
                 Image.fromarray(rgb_img).save(
                     renders_dir / f"render_view_{v:02d}_rgb.png"
