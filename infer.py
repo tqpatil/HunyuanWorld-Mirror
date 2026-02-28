@@ -280,8 +280,7 @@ def main():
                 print(f"[DEBUG] Saved predicted_camera_intrs.npy for {scene_uuid}")
 
             # Optionally, save other outputs (depth, normals, etc.) as needed
-if __name__ == "__main__":
-    main()
+
 
 
 
