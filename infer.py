@@ -309,7 +309,7 @@ def run_inference_on_scene(scene_path, output_root, args, model, device):
         means = predictions["splats"]["means"][0].reshape(-1, 3)
         scales = predictions["splats"]["scales"][0].reshape(-1, 3)
         quats = predictions["splats"]["quats"][0].reshape(-1, 4)
-        colors = (predictions["splats"].get("sh", predictions["splats"]).get("colors", predictions["splats"]["colors"])[0] if "sh" in predictions["splats"] else predictions["splats"]["colors"][0]).reshape(-1, 3)
+        colors = (predictions["splats"]["sh"][0] if "sh" in predictions["splats"] else predictions["splats"]["colors"][0]).reshape(-1, 3)
         opacities = predictions["splats"]["opacities"][0].reshape(-1)
         ply_path = outdir / "gaussians.ply"
         save_gs_ply(
