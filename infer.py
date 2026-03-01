@@ -34,7 +34,7 @@ def create_filter_mask(
     depth_preds: np.ndarray, 
     normal_preds: np.ndarray,
     sky_mask: np.ndarray,
-    confidence_percentile: float = 10.0,
+    confidence_percentile: float = 3.0,
     edge_normal_threshold: float = 5.0,
     edge_depth_threshold: float = 0.03,
     apply_confidence_mask: bool = True,
