@@ -466,10 +466,10 @@ def main():
         output_dir = output_root / rel_scene_path
         output_dir.mkdir(parents=True, exist_ok=True)
         print(f"\n[{idx+1}/{len(scene_folders)}] Processing scene: {scene_path}")
-        try:
-            run_inference_on_scene(scene_path, output_dir, args, model, device)
-        except Exception as e:
-            print(f"❌ Error processing {scene_path}: {e}")
+        # try:
+        run_inference_on_scene(scene_path, output_dir, args, model, device)
+        # except Exception as e:
+        #     print(f"❌ Error processing {scene_path}: {e}")
 
     print(f"\n🎉 Batch inference complete. Processed {len(scene_folders)} scenes.")
 
