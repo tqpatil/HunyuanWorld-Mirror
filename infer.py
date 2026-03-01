@@ -112,34 +112,28 @@ def create_filter_mask(
     return final_mask
 
 
-def main():
-    parser = argparse.ArgumentParser(description="HunyuanWorld-Mirror inference")
-    parser.add_argument("--input_path", type=str, default="examples/realistic/Ireland_Landscape", help="Input can be: a directory of images; a single video file; or a directory containing multiple video files (.mp4/.avi/.mov/.webm/.gif). If directory has multiple videos, frames from all clips are extracted (using --fps) and merged in filename order.")
-    parser.add_argument("--output_path", type=str, default="inference_output")
-    parser.add_argument("--fps", type=int, default=1, help="Frames per second for video extraction")
-    parser.add_argument("--target_size", type=int, default=518, help="Target size for image resizing")
-    parser.add_argument("--write_txt", action="store_true", help="Also write human-readable COLMAP txt (slow, huge)")
-    # Mask filtering parameters
-    parser.add_argument("--confidence_percentile", type=float, default=10.0, help="Confidence percentile threshold for filtering (0-100, filters bottom X percent)")
-    parser.add_argument("--edge_normal_threshold", type=float, default=5.0, help="Normal angle threshold in degrees for edge detection")
-    parser.add_argument("--edge_depth_threshold", type=float, default=0.03, help="Relative depth threshold for edge detection")
-    parser.add_argument("--apply_confidence_mask", action="store_true", default=True, help="Apply confidence-based filtering")
-    parser.add_argument("--apply_edge_mask", action="store_true", default=True, help="Apply edge-based filtering")
-    parser.add_argument("--apply_sky_mask", action="store_true", default=False, help="Apply sky mask filtering")
-    # Save flags
-    parser.add_argument("--save_pointmap", action="store_true", default=True, help="Save points PLY")
-    parser.add_argument("--save_depth", action="store_true", default=True, help="Save depth PNG")
-    parser.add_argument("--save_normal", action="store_true", default=True, help="Save normal PNG")
-    parser.add_argument("--save_gs", action="store_true", default=True, help="Save Gaussians PLY")
-    parser.add_argument("--save_rendered", action="store_true", default=True, help="Save rendered video")
-    parser.add_argument("--save_colmap", action="store_true", default=True, help="Save COLMAP sparse")
-    # Conditioning flags
-    parser.add_argument("--cond_pose", action="store_true", help="Use camera pose conditioning if available")
-    parser.add_argument("--cond_intrinsics", action="store_true", help="Use intrinsics conditioning if available")
-    parser.add_argument("--cond_depth", action="store_true", help="Use depth conditioning if available")
-    args = parser.parse_args()
 
-    # Print inference parameters
+def find_scene_folders(root_dir):
+    """
+    Recursively find all scene folders under root_dir that contain both 'images_4' directory and 'transforms.json' file.
+    Returns a list of Path objects (scene folder paths) relative to root_dir.
+    """
+    scene_folders = []
+    for subdir, dirs, files in os.walk(root_dir):
+        if 'images_4' in dirs and 'transforms.json' in files:
+            scene_folders.append(Path(subdir))
+    return scene_folders
+
+def run_inference_on_scene(scene_path, output_root, args, model, device):
+    """
+    Run the original inference pipeline on a single scene folder.
+    scene_path: Path to the scene folder containing images_4 and transforms.json
+    output_root: Path to the output root directory (mirrored structure will be created)
+    args: argparse.Namespace with all arguments
+    model: loaded WorldMirror model
+    device: torch.device
+    """
+    # Print inference parameters (once per scene)
     print(f"🔧 Configuration:")
     print(f"  - FPS: {args.fps}")
     print(f"  - Target size: {args.target_size}px")
@@ -152,27 +146,14 @@ def main():
     print(f"    - Intrinsics: {'✅' if args.cond_intrinsics else '❌'}")
     print(f"    - Depth: {'✅' if args.cond_depth else '❌'}")
 
-    # 1) Init model - This requires internet access or the huggingface hub cache to be pre-downloaded
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = WorldMirror.from_pretrained("tencent/HunyuanWorld-Mirror").to(device)
-    model.eval()
-    
-    input_path = Path(args.input_path)
-    
-    # Create output directory with filename-based subdirectory
-    if input_path.is_file():
-        subdir_name = input_path.stem
-    elif input_path.is_dir():
-        subdir_name = input_path.name
-    else:
-        raise ValueError(f"❌ Invalid input path: {input_path} (must be directory or video file)")
-    
-    outdir = Path(args.output_path) / subdir_name
+    # Set up output directory
+    outdir = Path(output_root)
     outdir.mkdir(parents=True, exist_ok=True)
-    
+
     # Determine input type and get image paths
     video_exts = ['.mp4', '.avi', '.mov', '.webm', '.gif']
-    
+    input_path = Path(scene_path)
+
     if input_path.is_file() and input_path.suffix.lower() in video_exts:
         # Case 1: Single video file - extract frames
         print(f"📹 Processing video: {input_path}")
@@ -181,10 +162,8 @@ def main():
         img_paths = select_frames_by_camera_poses(str(input_path), n=10, output_dir=str(input_frames_dir))
         if not img_paths:
             raise RuntimeError("❌ Failed to extract frames from video")
-
         img_paths = sorted(img_paths)
         print(f"✅ Extracted {len(img_paths)} frames to {input_frames_dir}")
-    
     elif input_path.is_dir():
         # Check if this is a DL3DV-10K dataset (has transforms.json)
         transforms_path = input_path / "transforms.json"
@@ -208,7 +187,6 @@ def main():
                 raise FileNotFoundError(f"❌ No image files found in {input_path}")
             img_paths = sorted(img_paths)
             print(f"✅ Loaded {len(img_paths)} images from {input_path}")
-
     else:
         raise ValueError(f"❌ Invalid input path: {input_path}")
 
@@ -232,7 +210,7 @@ def main():
         with torch.amp.autocast('cuda', enabled=bool(use_amp), dtype=amp_dtype):
             predictions = model(views=views, cond_flags=cond_flags)  # Multi-modal inference with priors
     print(f"🕒 Inference time: {time.time() - start_time:.3f} seconds")
-    
+
     # 4.5) Sky mask segmentation (if needed)
     sky_mask = None
     if args.apply_sky_mask:
@@ -256,7 +234,7 @@ def main():
     else:
         # Create dummy sky mask (all True = keep all points)
         sky_mask = np.ones((S, H, W), dtype=bool)
-    
+
     # 5) Save results
     print("\n📤 Saving results...")
     images_dir = outdir / "images" # original resolution images
@@ -272,7 +250,7 @@ def main():
     if args.save_colmap:
         sparse_dir = outdir / "sparse" / "0"
         sparse_dir.mkdir(parents=True, exist_ok=True)
-    
+
     # save images
     processed_image_names = []
     for i in range(S):
@@ -287,51 +265,35 @@ def main():
         new_width = orig_width
         pil_img = pil_img.resize((orig_width, new_height), Image.Resampling.BICUBIC)
         pil_img.save(str(images_dir / fname))
-
         processed_image_names.append(fname)
-        
+
     # save pointmap with filtering
     if "pts3d" in predictions and args.save_pointmap:
         print("Computing filter mask for pointmap...")
-        
-        # Prepare data for mask computation
         pts3d_conf_np = predictions["pts3d_conf"][0].detach().cpu().numpy()  # [S, H, W]
         depth_preds_np = predictions["depth"][0].detach().cpu().numpy()  # [S, H, W, 1]
         normal_preds_np = predictions["normals"][0].detach().cpu().numpy()  # [S, H, W, 3]
-        
-        # Compute comprehensive filter mask
-        # No mask filtering for incremental splats
         final_mask = np.ones(pts3d_conf_np.shape[:3], dtype=bool)  # [S, H, W]
-        
-        # Collect points and colors
         pts_list = []
         pts_colors_list = []
-        
         for i in range(S):
             pts = predictions["pts3d"][0, i]  # [H,W,3]
             img_colors = imgs[0, i].permute(1, 2, 0)  # [H, W, 3]
             img_colors = (img_colors * 255).to(torch.uint8)
-            
             pts_list.append(pts.reshape(-1, 3))
             pts_colors_list.append(img_colors.reshape(-1, 3))
-
         all_pts = torch.cat(pts_list, dim=0)
         all_colors = torch.cat(pts_colors_list, dim=0)
-        
-        # Apply filter mask
         final_mask_flat = final_mask.reshape(-1)  # Flatten to [S*H*W]
         final_mask_torch = torch.from_numpy(final_mask_flat).to(all_pts.device)
-        
         filtered_pts = all_pts[final_mask_torch]
         filtered_colors = all_colors[final_mask_torch]
-        
         save_scene_ply(outdir / "pts_from_pointmap.ply", filtered_pts, filtered_colors)
         print(f"  - Saved {len(filtered_pts)} filtered points to {outdir / 'pts_from_pointmap.ply'}")
 
     # save depthmap
     if "depth" in predictions and args.save_depth:
         for i in range(S):
-            # Save both PNG (for visualization) and NPY (for actual depth values)
             save_depth_png(depth_dir / f"depth_{i:04d}.png", predictions["depth"][0, i, :, :, 0])
             save_depth_npy(depth_dir / f"depth_{i:04d}.npy", predictions["depth"][0, i, :, :, 0])
         print(f"  - Saved {S} depth maps to {depth_dir} (both PNG and NPY formats)")
@@ -344,14 +306,11 @@ def main():
 
     # Save Gaussians PLY and render video
     if "splats" in predictions and args.save_gs:
-        # Get Gaussian parameters (already filtered by GaussianSplatRenderer)
         means = predictions["splats"]["means"][0].reshape(-1, 3)
         scales = predictions["splats"]["scales"][0].reshape(-1, 3)
         quats = predictions["splats"]["quats"][0].reshape(-1, 4)
-        colors = (predictions["splats"]["sh"][0] if "sh" in predictions["splats"] else predictions["splats"]["colors"][0]).reshape(-1, 3)
+        colors = (predictions["splats"].get("sh", predictions["splats"]).get("colors", predictions["splats"]["colors"])[0] if "sh" in predictions["splats"] else predictions["splats"]["colors"][0]).reshape(-1, 3)
         opacities = predictions["splats"]["opacities"][0].reshape(-1)
-        
-        # Save Gaussian PLY
         ply_path = outdir / "gaussians.ply"
         save_gs_ply(
             ply_path,
@@ -361,8 +320,6 @@ def main():
             colors,
             opacities,
         )
-
-        # Save incremental splats (views 0-1, 0-2, 0-3, ...) with renders
         model.gs_renderer.voxel_size = 0.002
         save_incremental_splats_and_render(
             predictions["splats"],
@@ -377,8 +334,6 @@ def main():
             cam_poses=predictions['camera_poses'],  # [B, S, 4, 4]
             cam_intrs=predictions['camera_intrs'],  # [B, S, 3, 3]
         )
-
-        # Render video using the same filtered splats from predictions
         num_views = S
         if args.save_rendered:
             e4x4 = predictions['camera_poses']
@@ -391,17 +346,12 @@ def main():
     # Build and export COLMAP reconstruction (images + sparse)
     if args.save_colmap:
         print("Computing filter mask for COLMAP reconstruction...")
-        
         final_width, final_height = new_width, new_height
         print(f"colmap_width: {final_width}, colmap_height: {final_height}")
-        
-        # Prepare data for mask computation (reuse from pointmap if not already computed)
         if not ("pts3d" in predictions and args.save_pointmap):
             pts3d_conf_np = predictions["pts3d_conf"][0].detach().cpu().numpy()  # [S, H, W]
             depth_preds_np = predictions["depth"][0].detach().cpu().numpy()  # [S, H, W, 1]
             normal_preds_np = predictions["normals"][0].detach().cpu().numpy()  # [S, H, W, 3]
-            
-            # Compute comprehensive filter mask
             final_mask = create_filter_mask(
                 pts3d_conf=pts3d_conf_np,
                 depth_preds=depth_preds_np,
@@ -414,28 +364,18 @@ def main():
                 apply_edge_mask=args.apply_edge_mask,
                 apply_sky_mask=args.apply_sky_mask,
             )  # [S, H, W]
-        
-        # Prepare extrinsics/intrinsics (camera-from-world) using resized image size
         e3x4, intr = vector_to_camera_matrices(predictions["camera_params"], image_hw=(final_height, final_width))
         _, intr_resize = vector_to_camera_matrices(predictions["camera_params"], image_hw=(H, W))
         extrinsics = e3x4[0] # [S,3,4]
         intrinsics = intr[0] # [S,3,3]
         intrinsics_resize = intr_resize[0] # [S,3,3]
-                
         points_list = []
         colors_list = []
         xyf_list = []
-
-        # Precompute pixel coordinate grid (XYF) like demo_colmap
         xyf_grid = create_pixel_coordinate_grid(num_frames=S, height=H, width=W)  # [S,H,W,3] float32
         xyf_grid = xyf_grid.astype(np.int32)
-        
-        # Calculate scaling factors to map from processed to resized coordinates
         scale_x = final_width / W
         scale_y = final_height / H
-
-        # Use the SAME coordinate transformation as GaussianSplatRenderer.prepare_splats
-        # to ensure consistency between Gaussian PLY and depth-based sparse points
         for i in range(S):
             d = predictions["depth"][0, i, :, :, 0]
             w2c = extrinsics[i][:3, :4]  # [3, 4] camera-to-world
@@ -443,37 +383,25 @@ def main():
             c2w = torch.linalg.inv(w2c)[:3, :4]  # [4,4]
             K = intrinsics_resize[i]
             pts_i, _, mask = depth_to_world_coords_points(d[None], c2w[None], K[None])
-
             img_colors = (imgs[0, i].permute(1, 2, 0) * 255).to(torch.uint8)
-            
-            # Apply filter mask from mask computation
             filter_mask_frame = torch.from_numpy(final_mask[i]).to(mask.device)  # [H, W]
             valid = mask[0] & filter_mask_frame  # Combine depth validity with filter mask
-            
             if valid.sum().item() == 0:
                 continue
             xyf_np = xyf_grid[i][valid.cpu().numpy()]  # [N,3] int32
             xyf_list.append(torch.from_numpy(xyf_np).to(valid.device))
             points_list.append(pts_i[0][valid])
             colors_list.append(img_colors[valid])
-
         all_pts = torch.cat(points_list, dim=0)
         all_cols = torch.cat(colors_list, dim=0)
         all_xyf = torch.cat(xyf_list, dim=0)
-
-        # Convert to numpy
         extrinsics = extrinsics.detach().cpu().numpy()
         intrinsics = intrinsics.detach().cpu().numpy()
         f_pts = all_pts.detach().cpu().to(torch.float32).numpy()
         f_cols = all_cols.detach().cpu().to(torch.uint8).numpy()
         f_xyf = all_xyf.detach().cpu().to(torch.int32).numpy()
-        
-        # Scale 2D coordinates from processed image to resized image resolution (if still valid)
         f_xyf[:, 0] = (f_xyf[:, 0] * scale_x).astype(np.int32)  # x coordinates
         f_xyf[:, 1] = (f_xyf[:, 1] * scale_y).astype(np.int32)  # y coordinates
-
-        # Build reconstruction using pycolmap (PINHOLE) with resized image size
-        # Standard COLMAP reconstruction with 2D-3D correspondences
         image_size = np.array([final_width, final_height])
         reconstruction = build_pycolmap_reconstruction(
             points=f_pts,
@@ -485,19 +413,66 @@ def main():
             shared_camera_model=False,
             camera_model="SIMPLE_PINHOLE",
         )
-
-        # Update image names to match saved files
         for pyimageid in reconstruction.images:
             reconstruction.images[pyimageid].name = processed_image_names[pyimageid - 1]
-
-        # Write BIN
         reconstruction.write(str(sparse_dir))
-        # Save points3D.ply
         save_points_ply(sparse_dir / "points3D.ply", f_pts, f_cols)
-        
         print(f"  - Saved COLMAP BIN and points3D.ply to {sparse_dir}")
-        
-        
+
+def main():
+    parser = argparse.ArgumentParser(description="HunyuanWorld-Mirror batch inference")
+    parser.add_argument("--input_path", type=str, required=True, help="Root directory containing subdirectories (e.g., 1K, 2K, ...) with scene folders (each containing images_4 and transforms.json)")
+    parser.add_argument("--output_path", type=str, required=True, help="Root output directory. Output will mirror input hierarchy.")
+    parser.add_argument("--fps", type=int, default=1, help="Frames per second for video extraction")
+    parser.add_argument("--target_size", type=int, default=518, help="Target size for image resizing")
+    parser.add_argument("--write_txt", action="store_true", help="Also write human-readable COLMAP txt (slow, huge)")
+    # Mask filtering parameters
+    parser.add_argument("--confidence_percentile", type=float, default=10.0, help="Confidence percentile threshold for filtering (0-100, filters bottom X percent)")
+    parser.add_argument("--edge_normal_threshold", type=float, default=5.0, help="Normal angle threshold in degrees for edge detection")
+    parser.add_argument("--edge_depth_threshold", type=float, default=0.03, help="Relative depth threshold for edge detection")
+    parser.add_argument("--apply_confidence_mask", action="store_true", default=True, help="Apply confidence-based filtering")
+    parser.add_argument("--apply_edge_mask", action="store_true", default=True, help="Apply edge-based filtering")
+    parser.add_argument("--apply_sky_mask", action="store_true", default=False, help="Apply sky mask filtering")
+    # Save flags
+    parser.add_argument("--save_pointmap", action="store_true", default=True, help="Save points PLY")
+    parser.add_argument("--save_depth", action="store_true", default=True, help="Save depth PNG")
+    parser.add_argument("--save_normal", action="store_true", default=True, help="Save normal PNG")
+    parser.add_argument("--save_gs", action="store_true", default=True, help="Save Gaussians PLY")
+    parser.add_argument("--save_rendered", action="store_true", default=True, help="Save rendered video")
+    parser.add_argument("--save_colmap", action="store_true", default=True, help="Save COLMAP sparse")
+    # Conditioning flags
+    parser.add_argument("--cond_pose", action="store_true", help="Use camera pose conditioning if available")
+    parser.add_argument("--cond_intrinsics", action="store_true", help="Use intrinsics conditioning if available")
+    parser.add_argument("--cond_depth", action="store_true", help="Use depth conditioning if available")
+    args = parser.parse_args()
+
+    input_root = Path(args.input_path)
+    output_root = Path(args.output_path)
+    if not input_root.exists() or not input_root.is_dir():
+        raise ValueError(f"❌ Input path must be a directory: {input_root}")
+
+    print(f"🔍 Searching for scene folders in {input_root} ...")
+    scene_folders = find_scene_folders(str(input_root))
+    print(f"✅ Found {len(scene_folders)} scene folders.")
+
+    # 1) Init model once for all scenes
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = WorldMirror.from_pretrained("tencent/HunyuanWorld-Mirror").to(device)
+    model.eval()
+
+    for idx, scene_path in enumerate(scene_folders):
+        # Compute relative path from input_root to scene_path
+        rel_scene_path = scene_path.relative_to(input_root)
+        output_dir = output_root / rel_scene_path
+        output_dir.mkdir(parents=True, exist_ok=True)
+        print(f"\n[{idx+1}/{len(scene_folders)}] Processing scene: {scene_path}")
+        try:
+            run_inference_on_scene(scene_path, output_dir, args, model, device)
+        except Exception as e:
+            print(f"❌ Error processing {scene_path}: {e}")
+
+    print(f"\n🎉 Batch inference complete. Processed {len(scene_folders)} scenes.")
+
 if __name__ == "__main__":
     main()
 
