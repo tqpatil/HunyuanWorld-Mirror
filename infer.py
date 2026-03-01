@@ -431,7 +431,7 @@ def main():
     parser.add_argument("--edge_normal_threshold", type=float, default=5.0, help="Normal angle threshold in degrees for edge detection")
     parser.add_argument("--edge_depth_threshold", type=float, default=0.03, help="Relative depth threshold for edge detection")
     parser.add_argument("--apply_confidence_mask", action="store_true", default=True, help="Apply confidence-based filtering")
-    parser.add_argument("--apply_edge_mask", action="store_true", default=True, help="Apply edge-based filtering")
+    parser.add_argument("--apply_edge_mask", action="store_true", default=False, help="Apply edge-based filtering")
     parser.add_argument("--apply_sky_mask", action="store_true", default=False, help="Apply sky mask filtering")
     # Save flags
     parser.add_argument("--save_pointmap", action="store_true", default=True, help="Save points PLY")
