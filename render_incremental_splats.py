@@ -58,7 +58,7 @@ def render_incremental_splats(
         }
 
         # Create renderer
-        gs_renderer = GaussianSplatRenderer(sh_degree=sh_degree, device=device)
+        gs_renderer = GaussianSplatRenderer(sh_degree=sh_degree).to(device)
 
         # Render
         try:
