@@ -19,7 +19,7 @@ def load_gs_ply(ply_path):
     opacities = vert['opacity'].astype(np.float32)
 
     # Detect SH channels
-    f_dc_fields = [f for f in vert.dtype.fields if f.startswith('f_dc_')]
+    f_dc_fields = [f for f in vert.dtype.names if f.startswith('f_dc_')]
     f_dc_fields_sorted = sorted(f_dc_fields, key=lambda x: int(x.split('_')[-1]))
     num_f_dc = len(f_dc_fields_sorted)
     if num_f_dc == 3:
