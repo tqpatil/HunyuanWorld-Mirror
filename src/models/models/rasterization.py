@@ -73,7 +73,13 @@ class Rasterizer:
             quats_i = quats[i]  # [N, 4]
             scales_i = scales[i]  # [N, 3]
             opacities_i = opacities[i]  # [N,]
-            colors_i = colors[i]  # [N, 3]
+            # Ensure colors_i is always [N, 3] for RGB or [N, num_sh_coeffs, 3] for SH
+            if colors.ndim == 3:
+                colors_i = colors[i]
+            elif colors.ndim == 4:
+                colors_i = colors[0, i]
+            else:
+                colors_i = colors  # fallback, should be [N, 3]
             viewmats_i = viewmats[i]  # [V, 4, 4]
             Ks_i = Ks[i]  # [V, 3, 3]
             
