@@ -3,85 +3,39 @@ from plyfile import PlyData
 
 def load_gs_ply(ply_path):
     """
-    Load Gaussian splat parameters from a 3DGS-style PLY file.
-
-    Returns:
-        means:    [N, 3] float32      (x, y, z)
-        scales:   [N, 3] float32      (scale_0..2; typically log-scales)
-        quats:    [N, 4] float32      (rot_0..3; w,x,y,z or similar)
-        colors:   [N, C, 3] float32   SH coefficients per color channel
-                                       C = 1 if only f_dc_0..2 exist,
-                                           >1 if f_rest_* present
-        opacities:[N]   float32       (usually logits)
+    Correctly loads Gaussian splat parameters from a PLY file.
     """
     plydata = PlyData.read(str(ply_path))
-    vert = plydata["vertex"]
+    vert = plydata['vertex']
 
-    # Basic attributes
-    means = np.stack(
-        [vert["x"], vert["y"], vert["z"]],
-        axis=-1,
-    ).astype(np.float32)
+    # 1. Extract Geometry
+    means = np.stack([vert['x'], vert['y'], vert['z']], axis=-1).astype(np.float32)
+    scales = np.stack([vert['scale_0'], vert['scale_1'], vert['scale_2']], axis=-1).astype(np.float32)
+    quats = np.stack([vert['rot_0'], vert['rot_1'], vert['rot_2'], vert['rot_3']], axis=-1).astype(np.float32)
+    opacities = vert['opacity'].astype(np.float32)
 
-    scales = np.stack(
-        [vert["scale_0"], vert["scale_1"], vert["scale_2"]],
-        axis=-1,
-    ).astype(np.float32)
+    # 2. Extract Spherical Harmonics (Colors)
+    # DC components (usually f_dc_0, 1, 2)
+    f_dc = np.zeros((means.shape[0], 3, 1))
+    f_dc[:, 0, 0] = vert['f_dc_0']
+    f_dc[:, 1, 0] = vert['f_dc_1']
+    f_dc[:, 2, 0] = vert['f_dc_2']
 
-    quats = np.stack(
-        [vert["rot_0"], vert["rot_1"], vert["rot_2"], vert["rot_3"]],
-        axis=-1,
-    ).astype(np.float32)
-
-    opacities = np.asarray(vert["opacity"], dtype=np.float32)
-
-    # --- Spherical harmonics coefficients ---
-    # Standard 3DGS PLY has:
-    #   f_dc_0, f_dc_1, f_dc_2          (DC RGB)
-    #   f_rest_0 ... f_rest_44          (higher-order SH, flattened)
-    # See e.g. PDAL and GraphDECO docs. [web:1][web:7][web:10]
-
-    # DC component: always 3 fields (RGB)
-    dc_fields = [f for f in vert.dtype.names if f.startswith("f_dc_")]
-    dc_fields_sorted = sorted(dc_fields, key=lambda x: int(x.split("_")[-1]))
-    if len(dc_fields_sorted) != 3:
-        raise ValueError(f"Expected 3 f_dc_* fields, found {len(dc_fields_sorted)}")
-
-    dc = np.stack(
-        [vert[name] for name in dc_fields_sorted],
-        axis=-1,
-    ).astype(np.float32)  # [N, 3]
-
-    # Higher-order SH (optional)
-    rest_fields = [f for f in vert.dtype.names if f.startswith("f_rest_")]
-    rest_fields_sorted = sorted(rest_fields, key=lambda x: int(x.split("_")[-1]))
-
-    if len(rest_fields_sorted) == 0:
-        # Only DC present → treat as 1 coefficient per channel
-        # colors shape: [N, 1, 3]
-        colors = dc[:, None, :]
+    # Higher-order components (f_rest_0 to f_rest_44)
+    extra_f_names = [f for f in vert.data.dtype.names if f.startswith('f_rest_')]
+    extra_f_names = sorted(extra_f_names, key=lambda x: int(x.split('_')[-1]))
+    
+    if len(extra_f_names) > 0:
+        f_rest = np.zeros((means.shape[0], len(extra_f_names)))
+        for idx, name in enumerate(extra_f_names):
+            f_rest[:, idx] = vert[name]
+        
+        # Reshape to [N, 3, 15] (for degree 3 SH)
+        f_rest = f_rest.reshape(means.shape[0], 3, -1)
+        # Combine to [N, 3, 16]
+        shs = np.concatenate([f_dc, f_rest], axis=2).transpose(0, 2, 1)
     else:
-        # Concatenate DC and higher-order coeffs into [N, K*3]
-        # Order: (R,G,B) for DC, then (flattened) rest coefficients
-        all_coeffs = np.concatenate(
-            [
-                dc,
-                np.stack(
-                    [vert[name] for name in rest_fields_sorted],
-                    axis=-1,
-                ).astype(np.float32),
-            ],
-            axis=-1,
-        )  # [N, 3 + len(f_rest)]
+        # Only DC components exist
+        shs = f_dc.transpose(0, 2, 1)
 
-        # Total scalar coeffs must be divisible by 3 (RGB)
-        if all_coeffs.shape[1] % 3 != 0:
-            raise ValueError(
-                f"Total SH scalar count {all_coeffs.shape[1]} is not divisible by 3"
-            )
-
-        num_coeffs = all_coeffs.shape[1] // 3  # number of SH coeffs per channel
-        # Reshape to [N, num_coeffs, 3] (coeff index, color channel)
-        colors = all_coeffs.reshape(-1, num_coeffs, 3)
-
-    return means, scales, quats, colors, opacities
+    return means, scales, quats, shs, opacities
