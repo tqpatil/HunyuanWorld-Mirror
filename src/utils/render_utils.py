@@ -662,11 +662,9 @@ def save_incremental_splats_and_render(
             # Reuse pruned_for_save which was already pruned above (avoid re-pruning)
             pruned_splats = pruned_for_save.copy()
             
-            # Get camera poses/intrinsics for views 0..end_view
+            # Always get camera poses/intrinsics for views 0..end_view
             cam_poses = predictions.get("camera_poses", torch.eye(4, device=device).unsqueeze(0).unsqueeze(0))
             cam_intrs = predictions.get("camera_intrs", torch.eye(3, device=device).unsqueeze(0).unsqueeze(0))
-            
-            # Slice to views 0..end_view (assuming [B, V, ...] format)
             if cam_poses.ndim == 4:  # [B, V, 4, 4]
                 cam_poses_subset = cam_poses[:, :end_view+1]  # [B, V_subset, 4, 4]
                 cam_intrs_subset = cam_intrs[:, :end_view+1]  # [B, V_subset, 3, 3]
