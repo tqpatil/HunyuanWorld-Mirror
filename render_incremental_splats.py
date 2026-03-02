@@ -36,11 +36,10 @@ def render_incremental_splats(
         quats = torch.from_numpy(quats).to(device)
         opacities = torch.from_numpy(opacities).to(device)
         colors = torch.from_numpy(colors).to(device)
-        # If colors are SH, reshape as needed
-        if colors.ndim == 2 and colors.shape[1] == 3:
-            sh = colors.unsqueeze(0)  # [1, N, 3]
-        else:
-            sh = colors  # fallback
+        # Always batch colors/SH as [1, N, 3]
+        sh = colors
+        if sh.ndim == 2:
+            sh = sh.unsqueeze(0)  # [1, N, 3]
 
         # Load cameras
         cam_poses = np.load(cam_poses_path)["camera_poses"]
@@ -54,7 +53,7 @@ def render_incremental_splats(
             "scales": scales.unsqueeze(0),
             "quats": quats.unsqueeze(0),
             "opacities": opacities.unsqueeze(0),
-            "sh": sh.unsqueeze(0) if sh.ndim == 2 else sh,
+            "sh": sh,
         }
 
         # Create renderer
