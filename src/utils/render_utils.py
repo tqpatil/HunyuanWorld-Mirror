@@ -719,6 +719,16 @@ def save_incremental_splats_and_render(
             
             print(f"Renders saved to {renders_dir.name}")
         
+        # Save camera poses and intrinsics for this incremental set
+        # Use .npz for efficient numpy storage
+        cam_poses_np = cam_poses_subset.detach().cpu().numpy() if hasattr(cam_poses_subset, 'detach') else np.array(cam_poses_subset)
+        cam_intrs_np = cam_intrs_subset.detach().cpu().numpy() if hasattr(cam_intrs_subset, 'detach') else np.array(cam_intrs_subset)
+        cam_poses_path = incremental_dir / f"camera_poses_views_0to{end_view}.npz"
+        cam_intrs_path = incremental_dir / f"camera_intrs_views_0to{end_view}.npz"
+        np.savez(cam_poses_path, camera_poses=cam_poses_np)
+        np.savez(cam_intrs_path, camera_intrs=cam_intrs_np)
+        print(f"Saved camera poses to {cam_poses_path.name} and intrinsics to {cam_intrs_path.name}")
+
         # Store pruned results for next iteration delta computation
         prev_pruned_for_save = pruned_for_save.copy()
         prev_pruned_view_multi = pruned_view_multi.clone() if pruned_view_multi is not None else None

@@ -329,7 +329,7 @@ def run_inference_on_scene(scene_path, output_root, args, model, device):
             H,
             W,
             save_ply=True,
-            save_renders=True,
+            save_renders=args.save_rendered,
             final_mask=None,  # [S, H, W] boolean mask
             cam_poses=None,  # [B, S, 4, 4]
             cam_intrs=None,  # [B, S, 3, 3]
@@ -434,12 +434,12 @@ def main():
     parser.add_argument("--apply_edge_mask", action="store_true", default=False, help="Apply edge-based filtering")
     parser.add_argument("--apply_sky_mask", action="store_true", default=False, help="Apply sky mask filtering")
     # Save flags
-    parser.add_argument("--save_pointmap", action="store_true", default=True, help="Save points PLY")
-    parser.add_argument("--save_depth", action="store_true", default=True, help="Save depth PNG")
-    parser.add_argument("--save_normal", action="store_true", default=True, help="Save normal PNG")
+    parser.add_argument("--save_pointmap", action="store_true", default=False, help="Save points PLY")
+    parser.add_argument("--save_depth", action="store_true", default=False, help="Save depth PNG")
+    parser.add_argument("--save_normal", action="store_true", default=False, help="Save normal PNG")
     parser.add_argument("--save_gs", action="store_true", default=True, help="Save Gaussians PLY")
-    parser.add_argument("--save_rendered", action="store_true", default=True, help="Save rendered video")
-    parser.add_argument("--save_colmap", action="store_true", default=True, help="Save COLMAP sparse")
+    parser.add_argument("--save_rendered", action="store_true", default=False, help="Save rendered video")
+    parser.add_argument("--save_colmap", action="store_true", default=False, help="Save COLMAP sparse")
     # Conditioning flags
     parser.add_argument("--cond_pose", action="store_true", help="Use camera pose conditioning if available")
     parser.add_argument("--cond_intrinsics", action="store_true", help="Use intrinsics conditioning if available")
