@@ -34,7 +34,7 @@ def create_filter_mask(
     depth_preds: np.ndarray, 
     normal_preds: np.ndarray,
     sky_mask: np.ndarray,
-    confidence_percentile: float = 3.0,
+    confidence_percentile: float = 10.0,
     edge_normal_threshold: float = 5.0,
     edge_depth_threshold: float = 0.03,
     apply_confidence_mask: bool = True,
@@ -430,7 +430,7 @@ def main():
     parser.add_argument("--confidence_percentile", type=float, default=10.0, help="Confidence percentile threshold for filtering (0-100, filters bottom X percent)")
     parser.add_argument("--edge_normal_threshold", type=float, default=5.0, help="Normal angle threshold in degrees for edge detection")
     parser.add_argument("--edge_depth_threshold", type=float, default=0.03, help="Relative depth threshold for edge detection")
-    parser.add_argument("--apply_confidence_mask", action="store_true", default=True, help="Apply confidence-based filtering")
+    parser.add_argument("--apply_confidence_mask", action="store_true", default=False, help="Apply confidence-based filtering")
     parser.add_argument("--apply_edge_mask", action="store_true", default=False, help="Apply edge-based filtering")
     parser.add_argument("--apply_sky_mask", action="store_true", default=False, help="Apply sky mask filtering")
     # Save flags
