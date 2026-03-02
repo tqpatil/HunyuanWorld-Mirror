@@ -61,26 +61,26 @@ def render_incremental_splats(
         gs_renderer = GaussianSplatRenderer(sh_degree=sh_degree).to(device)
 
         # Render
-        try:
-            render_colors, render_depths, _ = gs_renderer.rasterizer.rasterize_batches(
-                splats["means"], splats["quats"], splats["scales"], splats["opacities"],
-                splats["sh"],
-                cam_poses.to(torch.float32), cam_intrs.to(torch.float32),
-                width=W, height=H, sh_degree=sh_degree,
-            )
-            V_out = render_colors.shape[1]
-            for v in range(V_out):
-                rgb = render_colors[0, v].clamp(0, 1)
-                rgb_img = (rgb * 255).to(torch.uint8).cpu().numpy()
-                Image.fromarray(rgb_img).save(str(renders_dir / f"render_view_{v:02d}_rgb.png"))
+        # try:
+        render_colors, render_depths, _ = gs_renderer.rasterizer.rasterize_batches(
+            splats["means"], splats["quats"], splats["scales"], splats["opacities"],
+            splats["sh"],
+            cam_poses.to(torch.float32), cam_intrs.to(torch.float32),
+            width=W, height=H, sh_degree=sh_degree,
+        )
+        V_out = render_colors.shape[1]
+        for v in range(V_out):
+            rgb = render_colors[0, v].clamp(0, 1)
+            rgb_img = (rgb * 255).to(torch.uint8).cpu().numpy()
+            Image.fromarray(rgb_img).save(str(renders_dir / f"render_view_{v:02d}_rgb.png"))
 
-                depth = render_depths[0, v, :, :, 0].clamp(0, None)
-                depth_normalized = (depth - depth.min()) / (depth.max() - depth.min() + 1e-8)
-                depth_img = (depth_normalized * 255).to(torch.uint8).cpu().numpy()
-                Image.fromarray(depth_img).save(str(renders_dir / f"render_view_{v:02d}_depth.png"))
-                print(f"Rendered view {v} for splats_views_0to{end_view}")
-        except Exception as e:
-            print(f"Failed to render for splats_views_0to{end_view}: {e}")
+            depth = render_depths[0, v, :, :, 0].clamp(0, None)
+            depth_normalized = (depth - depth.min()) / (depth.max() - depth.min() + 1e-8)
+            depth_img = (depth_normalized * 255).to(torch.uint8).cpu().numpy()
+            Image.fromarray(depth_img).save(str(renders_dir / f"render_view_{v:02d}_depth.png"))
+            print(f"Rendered view {v} for splats_views_0to{end_view}")
+        # except Exception as e:
+        #     print(f"Failed to render for splats_views_0to{end_view}: {e}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Render incremental splats from saved PLY and camera files.")
