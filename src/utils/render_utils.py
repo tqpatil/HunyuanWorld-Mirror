@@ -654,6 +654,16 @@ def save_incremental_splats_and_render(
                 save_gs_ply(ply_path_delta, means_delta, scales_delta, quats_delta, colors_delta, opacities_delta)
                 print(f"   Saved {len(means_delta)} delta splats to {ply_path_delta.name}")
         
+        # Always get camera poses/intrinsics for views 0..end_view
+        cam_poses = predictions.get("camera_poses", torch.eye(4, device=device).unsqueeze(0).unsqueeze(0))
+        cam_intrs = predictions.get("camera_intrs", torch.eye(3, device=device).unsqueeze(0).unsqueeze(0))
+        if cam_poses.ndim == 4:  # [B, V, 4, 4]
+            cam_poses_subset = cam_poses[:, :end_view+1]  # [B, V_subset, 4, 4]
+            cam_intrs_subset = cam_intrs[:, :end_view+1]  # [B, V_subset, 3, 3]
+        else:
+            cam_poses_subset = cam_poses
+            cam_intrs_subset = cam_intrs
+
         # Render from cameras of views 0..end_view
         if save_renders:
             renders_dir = incremental_dir / f"renders_views_0to{end_view}"
@@ -661,16 +671,6 @@ def save_incremental_splats_and_render(
             
             # Reuse pruned_for_save which was already pruned above (avoid re-pruning)
             pruned_splats = pruned_for_save.copy()
-            
-            # Always get camera poses/intrinsics for views 0..end_view
-            cam_poses = predictions.get("camera_poses", torch.eye(4, device=device).unsqueeze(0).unsqueeze(0))
-            cam_intrs = predictions.get("camera_intrs", torch.eye(3, device=device).unsqueeze(0).unsqueeze(0))
-            if cam_poses.ndim == 4:  # [B, V, 4, 4]
-                cam_poses_subset = cam_poses[:, :end_view+1]  # [B, V_subset, 4, 4]
-                cam_intrs_subset = cam_intrs[:, :end_view+1]  # [B, V_subset, 3, 3]
-            else:
-                cam_poses_subset = cam_poses
-                cam_intrs_subset = cam_intrs
             
             # Prepare pruned splats with batch dimension (rasterize_batches indexes into batch dim)
             # pruned_splats has shape [N, ...] after extraction, we need [B=1, N, ...]
