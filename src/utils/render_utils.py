@@ -416,7 +416,7 @@ def save_incremental_splats_and_render(
     H,
     W,
     save_ply=True,
-    save_renders=True,
+    save_renders=False,
     final_mask=None,  # [S, H, W] boolean mask (optional)
     cam_poses=None,   # [B, S, 4, 4] (optional, needed if final_mask is provided)
     cam_intrs=None,   # [B, S, 3, 3] (optional, needed if final_mask is provided)
