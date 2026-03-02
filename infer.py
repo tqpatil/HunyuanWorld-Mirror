@@ -330,9 +330,9 @@ def run_inference_on_scene(scene_path, output_root, args, model, device):
             W,
             save_ply=True,
             save_renders=True,
-            final_mask=final_mask,  # [S, H, W] boolean mask
-            cam_poses=predictions['camera_poses'],  # [B, S, 4, 4]
-            cam_intrs=predictions['camera_intrs'],  # [B, S, 3, 3]
+            final_mask=None,  # [S, H, W] boolean mask
+            cam_poses=None,  # [B, S, 4, 4]
+            cam_intrs=None,  # [B, S, 3, 3]
         )
         num_views = S
         if args.save_rendered:
