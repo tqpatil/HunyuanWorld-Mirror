@@ -38,65 +38,6 @@ def render_incremental_splats(
         opacities = torch.from_numpy(opacities).to(device)
         colors = torch.from_numpy(colors).to(device)
 
-        if sh_degree == 0:
-            # Convert SH DC to RGB using SH2RGB utility
-            rgb = SH2RGB(colors.reshape(-1, 3)).reshape(-1, 3)
-            splats = {
-                "means": means.unsqueeze(0),
-                "scales": scales.unsqueeze(0),
-                "quats": quats.unsqueeze(0),
-                "opacities": opacities.unsqueeze(0),
-                "colors": rgb.unsqueeze(0).unsqueeze(1),  # [1, N, 1, 3]
-            }
-            print("DEBUG: means shape", splats["means"].shape)
-            print("DEBUG: scales shape", splats["scales"].shape)
-            print("DEBUG: quats shape", splats["quats"].shape)
-            print("DEBUG: opacities shape", splats["opacities"].shape)
-            print("DEBUG: colors shape", splats["colors"].shape)
-
-            # Remove batch dimension before passing to rasterizer
-            means = splats["means"][0]
-            scales = splats["scales"][0]
-            quats = splats["quats"][0]
-            opacities = splats["opacities"][0]
-            colors = splats["colors"][0]
-        else:
-            # Ensure SH matches requested degree
-            num_coeffs = (sh_degree + 1) ** 2
-            if colors.shape[1] < num_coeffs:
-                pad = torch.zeros((colors.shape[0], num_coeffs - colors.shape[1], 3), device=colors.device)
-                sh = torch.cat([colors, pad], dim=1)
-            else:
-                sh = colors[:, :num_coeffs, :]
-                print("DEBUG: means shape", splats["means"].shape)
-                print("DEBUG: scales shape", splats["scales"].shape)
-                print("DEBUG: quats shape", splats["quats"].shape)
-                print("DEBUG: opacities shape", splats["opacities"].shape)
-                print("DEBUG: sh shape", splats["sh"].shape)
-            # Evaluate SH to RGB for each view direction
-            # cam_poses: [V, 4, 4], get view directions for each view
-            V = cam_poses.shape[0]
-            N = sh.shape[0]
-            # Assume camera looks along -Z in world space, so direction is third column of rotation matrix
-            view_dirs = cam_poses[:, :3, 2]  # [V, 3], shape: (V, 3)
-            view_dirs = -view_dirs / (view_dirs.norm(dim=-1, keepdim=True) + 1e-8)  # normalize and flip
-            # Evaluate SH for each view and splat
-            rgb_views = []
-            for v in range(V):
-                # eval_sh expects sh: [N, num_coeffs, 3], dirs: [N, 3] or [3]
-                dirs = view_dirs[v].expand(N, 3)
-                rgb_v = eval_sh(sh_degree, sh, dirs)  # [N, 3]
-                rgb_views.append(rgb_v)
-            rgb_views = torch.stack(rgb_views, dim=0)  # [V, N, 3]
-            colors_batch = rgb_views.unsqueeze(0)  # [1, V, N, 3]
-            splats = {
-                "means": means.unsqueeze(0),
-                "scales": scales.unsqueeze(0),
-                "quats": quats.unsqueeze(0),
-                "opacities": opacities.unsqueeze(0),
-                "colors": colors_batch,  # [1, V, N, 3]
-            }
-
         # Load cameras
         cam_poses = np.load(cam_poses_path)["camera_poses"]
         cam_intrs = np.load(cam_intrs_path)["camera_intrs"]
@@ -106,62 +47,61 @@ def render_incremental_splats(
         # Create renderer
         gs_renderer = GaussianSplatRenderer(sh_degree=sh_degree).to(device)
 
-        # Render
-        if sh_degree == 0:
-            # Ensure colors is [1, N, 1, 3] before rasterizer call and all tensors are float32
-            colors = rgb.unsqueeze(0).unsqueeze(2).to(torch.float32)  # [1, N, 1, 3]
-            splats = {
-                "means": means.unsqueeze(0).to(torch.float32),
-                "scales": scales.unsqueeze(0).to(torch.float32),
-                "quats": quats.unsqueeze(0).to(torch.float32),
-                "opacities": opacities.unsqueeze(0).to(torch.float32),
-                "colors": colors,
-            }
-            print("DEBUG: means shape", splats["means"].shape)
-            print("DEBUG: scales shape", splats["scales"].shape)
-            print("DEBUG: quats shape", splats["quats"].shape)
-            print("DEBUG: opacities shape", splats["opacities"].shape)
-            print("DEBUG: colors shape before rasterizer", splats["colors"].shape)
-            print("DEBUG: cam_poses shape", cam_poses.shape)
-            print("DEBUG: cam_intrs shape", cam_intrs.shape)
-            print("DEBUG: width", W)
-            print("DEBUG: height", H)
-            print("DEBUG: sh_degree", sh_degree)
+        # Render each view one at a time and save
+        V = cam_poses.shape[0]
+        for v in range(V):
+            # Prepare per-view camera pose/intrinsics
+            cam_pose_v = cam_poses[v:v+1].unsqueeze(0).to(torch.float32)  # [1, 1, 4, 4]
+            cam_intr_v = cam_intrs[v:v+1].unsqueeze(0).to(torch.float32)  # [1, 1, 3, 3]
 
-            # Render each view one at a time to avoid OOM
-            B = splats["means"].shape[0]
-            V = cam_poses.shape[1] if cam_poses.ndim == 4 else cam_poses.shape[0]
-            for v in range(V):
-                means = splats["means"]
-                scales = splats["scales"]
-                quats = splats["quats"]
-                opacities = splats["opacities"]
-                colors = splats["colors"]
-                cam_pose_v = cam_poses[:, v:v+1].to(torch.float32)  # [B, 1, 4, 4]
-                cam_intr_v = cam_intrs[:, v:v+1].to(torch.float32)  # [B, 1, 3, 3]
-                print(f"Rendering view {v+1} of {V}")
-                render_colors, render_depths, _ = gs_renderer.rasterizer.rasterize_batches(
-                    means, quats, scales, opacities, colors,
-                    cam_pose_v, cam_intr_v,
-                    width=W, height=H, sh_degree=sh_degree,
-                )
-                # ...save or process render_colors, render_depths for this view...
-        else:
-            # ...existing code for SH...
-            pass
-        V_out = render_colors.shape[1]
-        for v in range(V_out):
-            rgb = render_colors[0, v].clamp(0, 1)
+            # Prepare splat batch
+            if sh_degree == 0:
+                rgb = SH2RGB(colors.reshape(-1, 3)).reshape(-1, 3)
+                splats = {
+                    "means": means.unsqueeze(0).to(torch.float32),
+                    "scales": scales.unsqueeze(0).to(torch.float32),
+                    "quats": quats.unsqueeze(0).to(torch.float32),
+                    "opacities": opacities.unsqueeze(0).to(torch.float32),
+                    "colors": rgb.unsqueeze(0).unsqueeze(1).to(torch.float32),  # [1, N, 1, 3]
+                }
+            else:
+                num_coeffs = (sh_degree + 1) ** 2
+                if colors.shape[1] < num_coeffs:
+                    pad = torch.zeros((colors.shape[0], num_coeffs - colors.shape[1], 3), device=colors.device)
+                    sh = torch.cat([colors, pad], dim=1)
+                else:
+                    sh = colors[:, :num_coeffs, :]
+                # Evaluate SH for this view direction
+                view_dir = cam_poses[v, :3, 2]
+                view_dir = -view_dir / (view_dir.norm() + 1e-8)
+                dirs = view_dir.expand(sh.shape[0], 3)
+                rgb_v = eval_sh(sh_degree, sh, dirs)  # [N, 3]
+                splats = {
+                    "means": means.unsqueeze(0).to(torch.float32),
+                    "scales": scales.unsqueeze(0).to(torch.float32),
+                    "quats": quats.unsqueeze(0).to(torch.float32),
+                    "opacities": opacities.unsqueeze(0).to(torch.float32),
+                    "colors": rgb_v.unsqueeze(0).unsqueeze(1).to(torch.float32),  # [1, N, 1, 3]
+                }
+
+            print(f"Rendering view {v} of {V} for splats_views_0to{end_view}")
+            render_colors, render_depths, _ = gs_renderer.rasterizer.rasterize_batches(
+                splats["means"], splats["quats"], splats["scales"], splats["opacities"], splats["colors"],
+                cam_pose_v, cam_intr_v,
+                width=W, height=H, sh_degree=sh_degree,
+            )
+
+            # Save RGB
+            rgb = render_colors[0, 0].clamp(0, 1)
             rgb_img = (rgb * 255).to(torch.uint8).cpu().numpy()
             Image.fromarray(rgb_img).save(str(renders_dir / f"render_view_{v:02d}_rgb.png"))
 
-            depth = render_depths[0, v, :, :, 0].clamp(0, None)
+            # Save depth
+            depth = render_depths[0, 0, :, :, 0].clamp(0, None)
             depth_normalized = (depth - depth.min()) / (depth.max() - depth.min() + 1e-8)
             depth_img = (depth_normalized * 255).to(torch.uint8).cpu().numpy()
             Image.fromarray(depth_img).save(str(renders_dir / f"render_view_{v:02d}_depth.png"))
-            print(f"Rendered view {v} for splats_views_0to{end_view}")
-        # except Exception as e:
-        #     print(f"Failed to render for splats_views_0to{end_view}: {e}")
+            print(f"Saved render and depth for view {v} in splats_views_0to{end_view}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Render incremental splats from saved PLY and camera files.")
