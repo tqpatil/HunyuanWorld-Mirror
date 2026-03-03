@@ -32,11 +32,11 @@ def render_incremental_splats(
 
         # Load splats
         means, scales, quats, colors, opacities = load_gs_ply(ply_path)
-        means = torch.from_numpy(means).to(device)
-        scales = torch.from_numpy(scales).to(device)
-        quats = torch.from_numpy(quats).to(device)
-        opacities = torch.from_numpy(opacities).to(device)
-        colors = torch.from_numpy(colors).to(device)
+        means = means.unsqueeze(0) if means.ndim == 2 else means  # [1, N, 3/4]
+        quats = quats.unsqueeze(0) if quats.ndim == 2 else quats  # [1, N, 4]
+        scales = scales.unsqueeze(0) if scales.ndim == 2 else scales  # [1, N, 3]
+        opacities = opacities.unsqueeze(0) if opacities.ndim == 1 else opacities  # [1, N]
+        sh = colors.unsqueeze(0) if sh_degree == 3 else sh  # [1, N, num_sh_coeffs, 3]
 
         # Load cameras
         cam_poses = np.load(cam_poses_path)["camera_poses"]
@@ -53,42 +53,61 @@ def render_incremental_splats(
             # Prepare per-view camera pose/intrinsics
             cam_pose_v = cam_poses[v:v+1].to(torch.float32)  # [1, 4, 4]
             cam_intr_v = cam_intrs[v:v+1].to(torch.float32)  # [1, 3, 3]
+            cams_c2w = cam_pose_v
+            cams_K = cam_intr_v
 
+            colors_arg = sh if sh is not None else colors
+
+            print("DEBUG: means shape", means.shape)
+            print("DEBUG: scales shape", scales.shape)
+            print("DEBUG: quats shape", quats.shape)
+            print("DEBUG: opacities shape", opacities.shape)
+            if colors_arg is not None:
+                print("DEBUG: colors shape", colors_arg.shape)
+            if sh is not None:
+                print("DEBUG: sh shape", sh.shape)
+            print("DEBUG: cams_c2w shape", cams_c2w.shape)
+            print("DEBUG: cams_K shape", cams_K.shape)
+            print("DEBUG: width", W)
+            print("DEBUG: height", H)
+            print("DEBUG: sh_degree", gs_renderer.sh_degree if sh is not None else None)
             # Prepare splat batch
-            if sh_degree == 0:
-                rgb = SH2RGB(colors.reshape(-1, 3)).reshape(-1, 3)
-                splats = {
-                    "means": means.unsqueeze(0).to(torch.float32),
-                    "scales": scales.unsqueeze(0).to(torch.float32),
-                    "quats": quats.unsqueeze(0).to(torch.float32),
-                    "opacities": opacities.unsqueeze(0).to(torch.float32),
-                    "colors": rgb.unsqueeze(0).to(torch.float32),  # [1, N, 3]
-                }
-            else:
-                num_coeffs = (sh_degree + 1) ** 2
-                if colors.shape[1] < num_coeffs:
-                    pad = torch.zeros((colors.shape[0], num_coeffs - colors.shape[1], 3), device=colors.device)
-                    sh = torch.cat([colors, pad], dim=1)
-                else:
-                    sh = colors[:, :num_coeffs, :]
-                # Evaluate SH for this view direction
-                view_dir = cam_poses[v, :3, 2]
-                view_dir = -view_dir / (view_dir.norm() + 1e-8)
-                dirs = view_dir.expand(sh.shape[0], 3)
-                rgb_v = eval_sh(sh_degree, sh, dirs)  # [N, 3]
-                splats = {
-                    "means": means.unsqueeze(0).to(torch.float32),
-                    "scales": scales.unsqueeze(0).to(torch.float32),
-                    "quats": quats.unsqueeze(0).to(torch.float32),
-                    "opacities": opacities.unsqueeze(0).to(torch.float32),
-                    "colors": rgb_v.unsqueeze(0).to(torch.float32),  # [1, N, K, 3] (already [N, K, 3])
-                }
+            # if sh_degree == 0:
+            #     rgb = SH2RGB(colors.reshape(-1, 3)).reshape(-1, 3)
+            #     splats = {
+            #         "means": means.unsqueeze(0).to(torch.float32),
+            #         "scales": scales.unsqueeze(0).to(torch.float32),
+            #         "quats": quats.unsqueeze(0).to(torch.float32),
+            #         "opacities": opacities.unsqueeze(0).to(torch.float32),
+            #         "colors": rgb.unsqueeze(0).to(torch.float32),  # [1, N, 3]
+            #     }
+            # else:
+            #     num_coeffs = (sh_degree + 1) ** 2
+            #     if colors.shape[1] < num_coeffs:
+            #         pad = torch.zeros((colors.shape[0], num_coeffs - colors.shape[1], 3), device=colors.device)
+            #         sh = torch.cat([colors, pad], dim=1)
+            #     else:
+            #         sh = colors[:, :num_coeffs, :]
+            #     # Evaluate SH for this view direction
+            #     view_dir = cam_poses[v, :3, 2]
+            #     view_dir = -view_dir / (view_dir.norm() + 1e-8)
+            #     dirs = view_dir.expand(sh.shape[0], 3)
+            #     rgb_v = eval_sh(sh_degree, sh, dirs)  # [N, 3]
+            #     splats = {
+            #         "means": means.unsqueeze(0).to(torch.float32),
+            #         "scales": scales.unsqueeze(0).to(torch.float32),
+            #         "quats": quats.unsqueeze(0).to(torch.float32),
+            #         "opacities": opacities.unsqueeze(0).to(torch.float32),
+            #         "colors": rgb_v.unsqueeze(0).to(torch.float32),  # [1, N, K, 3] (already [N, K, 3])
+            #     }
 
             print(f"Rendering view {v} of {V} for splats_views_0to{end_view}")
             render_colors, render_depths, _ = gs_renderer.rasterizer.rasterize_batches(
-                splats["means"], splats["quats"], splats["scales"], splats["opacities"], splats["colors"],
-                cam_pose_v, cam_intr_v,
-                width=W, height=H, sh_degree=sh_degree,
+                    means, quats, scales, opacities,
+                    colors_arg,
+                    cams_c2w, cams_K,
+                    width=W, height=H,
+                    sh_degree=gs_renderer.sh_degree if sh is not None else None,
             )
 
             # Save RGB
