@@ -108,10 +108,20 @@ def render_incremental_splats(
 
         # Render
         if sh_degree == 0:
-            print("DEBUG: colors shape", colors.shape)
+            # Index splat arrays with [0] to remove batch dimension before passing to rasterizer
+            means_i = splats["means"][0]
+            scales_i = splats["scales"][0]
+            quats_i = splats["quats"][0]
+            opacities_i = splats["opacities"][0]
+            colors_i = splats["colors"][0]
+            print("DEBUG: means shape", means_i.shape)
+            print("DEBUG: scales shape", scales_i.shape)
+            print("DEBUG: quats shape", quats_i.shape)
+            print("DEBUG: opacities shape", opacities_i.shape)
+            print("DEBUG: colors shape", colors_i.shape)
             render_colors, render_depths, _ = gs_renderer.rasterizer.rasterize_batches(
-                means, quats, scales, opacities,
-                colors,
+                means_i, quats_i, scales_i, opacities_i,
+                colors_i,
                 cam_poses.to(torch.float32), cam_intrs.to(torch.float32),
                 width=W, height=H, sh_degree=sh_degree,
             )
