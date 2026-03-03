@@ -41,12 +41,13 @@ def render_incremental_splats(
         if sh_degree == 0:
             # Convert SH DC to RGB using SH2RGB utility
             rgb = SH2RGB(colors.reshape(-1, 3)).reshape(-1, 3)
+            colors_batch = rgb[None, ...] if rgb.ndim == 2 else rgb
             splats = {
                 "means": means.unsqueeze(0),
                 "scales": scales.unsqueeze(0),
                 "quats": quats.unsqueeze(0),
                 "opacities": opacities.unsqueeze(0),
-                "colors": rgb[None, ...],  # [1, N, 3]
+                "colors": colors_batch,  # [1, N, 3]
             }
         else:
             # Ensure SH matches requested degree
@@ -75,6 +76,7 @@ def render_incremental_splats(
 
         # Render
         if sh_degree == 0:
+            print("DEBUG: colors shape", splats["colors"].shape)
             render_colors, render_depths, _ = gs_renderer.rasterizer.rasterize_batches(
                 splats["means"], splats["quats"], splats["scales"], splats["opacities"],
                 splats["colors"],
