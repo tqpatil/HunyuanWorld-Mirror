@@ -127,12 +127,25 @@ def render_incremental_splats(
             print("DEBUG: width", W)
             print("DEBUG: height", H)
             print("DEBUG: sh_degree", sh_degree)
-            render_colors, render_depths, _ = gs_renderer.rasterizer.rasterize_batches(
-                splats["means"], splats["quats"], splats["scales"], splats["opacities"],
-                splats["colors"],
-                cam_poses.to(torch.float32), cam_intrs.to(torch.float32),
-                width=W, height=H, sh_degree=sh_degree,
-            )
+
+            # Render each view one at a time to avoid OOM
+            B = splats["means"].shape[0]
+            V = cam_poses.shape[1] if cam_poses.ndim == 4 else cam_poses.shape[0]
+            for v in range(V):
+                means = splats["means"]
+                scales = splats["scales"]
+                quats = splats["quats"]
+                opacities = splats["opacities"]
+                colors = splats["colors"]
+                cam_pose_v = cam_poses[:, v:v+1].to(torch.float32)  # [B, 1, 4, 4]
+                cam_intr_v = cam_intrs[:, v:v+1].to(torch.float32)  # [B, 1, 3, 3]
+                print(f"Rendering view {v+1} of {V}")
+                render_colors, render_depths, _ = gs_renderer.rasterizer.rasterize_batches(
+                    means, quats, scales, opacities, colors,
+                    cam_pose_v, cam_intr_v,
+                    width=W, height=H, sh_degree=sh_degree,
+                )
+                # ...save or process render_colors, render_depths for this view...
         else:
             # ...existing code for SH...
             pass
