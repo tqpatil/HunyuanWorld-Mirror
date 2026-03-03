@@ -52,32 +52,15 @@ def render_incremental_splats(
             # Ensure SH matches requested degree
             num_coeffs = (sh_degree + 1) ** 2
             if colors.shape[1] < num_coeffs:
-                pad = torch.zeros((colors.shape[0], num_coeffs - colors.shape[1], 3), device=colors.device)
-                sh = torch.cat([colors, pad], dim=1)
+                sh = torch.cat([colors, torch.zeros((colors.shape[0], num_coeffs - colors.shape[1], 3), device=colors.device)], dim=1)
             else:
                 sh = colors[:, :num_coeffs, :]
-            # Evaluate SH to RGB for each view direction
-            # cam_poses: [V, 4, 4], get view directions for each view
-            V = cam_poses.shape[0]
-            N = sh.shape[0]
-            # Assume camera looks along -Z in world space, so direction is third column of rotation matrix
-            view_dirs = cam_poses[:, :3, 2]  # [V, 3], shape: (V, 3)
-            view_dirs = -view_dirs / (view_dirs.norm(dim=-1, keepdim=True) + 1e-8)  # normalize and flip
-            # Evaluate SH for each view and splat
-            rgb_views = []
-            for v in range(V):
-                # eval_sh expects sh: [N, num_coeffs, 3], dirs: [N, 3] or [3]
-                dirs = view_dirs[v].expand(N, 3)
-                rgb_v = eval_sh(sh_degree, sh, dirs)  # [N, 3]
-                rgb_views.append(rgb_v)
-            rgb_views = torch.stack(rgb_views, dim=0)  # [V, N, 3]
-            colors_batch = rgb_views.unsqueeze(0)  # [1, V, N, 3]
             splats = {
-                "means": means.unsqueeze(0),
-                "scales": scales.unsqueeze(0),
-                "quats": quats.unsqueeze(0),
-                "opacities": opacities.unsqueeze(0),
-                "colors": colors_batch,  # [1, V, N, 3]
+                "means": means,
+                "scales": scales,
+                "quats": quats,
+                "opacities": opacities,
+                "sh": sh,  # [N, num_coeffs, 3]
             }
 
         # Load cameras
@@ -99,7 +82,13 @@ def render_incremental_splats(
                 width=W, height=H, sh_degree=sh_degree,
             )
         else:
-            # ...existing code for SH...
+            print("DEBUG: sh shape", splats["sh"].shape)
+            render_colors, render_depths, _ = gs_renderer.rasterizer.rasterize_batches(
+                splats["means"], splats["quats"], splats["scales"], splats["opacities"],
+                splats["sh"],
+                cam_poses.to(torch.float32), cam_intrs.to(torch.float32),
+                width=W, height=H, sh_degree=sh_degree,
+            )
         V_out = render_colors.shape[1]
         for v in range(V_out):
             rgb = render_colors[0, v].clamp(0, 1)
