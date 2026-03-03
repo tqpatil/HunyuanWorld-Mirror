@@ -5,6 +5,7 @@ import torch
 from PIL import Image
 from src.models.models.rasterization import GaussianSplatRenderer
 from src.utils.load_gs_ply import load_gs_ply
+from src.models.utils.sh_utils import SH2RGB
 
 def render_incremental_splats(
     incremental_dir: Path,
@@ -36,17 +37,20 @@ def render_incremental_splats(
         quats = torch.from_numpy(quats).to(device)
         opacities = torch.from_numpy(opacities).to(device)
         colors = torch.from_numpy(colors).to(device)
-        # Batch colors/SH correctly based on sh_degree
+
         if sh_degree == 0:
-            # RGB: colors shape [N, 3] -> [1, N, 3]
-            sh = colors
-            if sh.ndim == 2:
-                sh = sh[None, ...]
+            # Convert SH DC to RGB using SH2RGB utility
+            rgb = SH2RGB(colors.reshape(-1, 3)).reshape(-1, 3)
+            sh = rgb[None, ...]  # [1, N, 3]
         else:
-            # SH: colors shape [N, num_sh_coeffs, 3] -> [1, N, num_sh_coeffs, 3]
-            sh = colors
-            if sh.ndim == 3:
-                sh = sh[None, ...]
+            # Ensure SH matches requested degree
+            num_coeffs = (sh_degree + 1) ** 2
+            if colors.shape[1] < num_coeffs:
+                # Pad with zeros
+                pad = torch.zeros((colors.shape[0], num_coeffs - colors.shape[1], 3), device=colors.device)
+                sh = torch.cat([colors, pad], dim=1)[None, ...]
+            else:
+                sh = colors[:, :num_coeffs, :][None, ...]  # [1, N, num_coeffs, 3]
 
         # Load cameras
         cam_poses = np.load(cam_poses_path)["camera_poses"]
