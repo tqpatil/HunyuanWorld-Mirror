@@ -12,7 +12,7 @@ def render_incremental_splats(
     output_dir: Path,
     H: int,
     W: int,
-    sh_degree: int = 3,
+    sh_degree: int = 0,
     device: str = 'cuda',
 ):
     incremental_dir = Path(incremental_dir)
