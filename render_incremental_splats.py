@@ -32,15 +32,15 @@ def render_incremental_splats(
 
         # Load splats
         means, scales, quats, colors, opacities = load_gs_ply(ply_path)
-        means = torch.from_numpy(means).to(torch.float32).to(device)
+        means = torch.from_numpy(means).to(torch.float32)
         means = means.unsqueeze(0) if means.ndim == 2 else means  # [1, N, 3/4]
-        quats = torch.from_numpy(quats).to(torch.float32).to(device)
+        quats = torch.from_numpy(quats).to(torch.float32)
         quats = quats.unsqueeze(0) if quats.ndim == 2 else quats  # [1, N, 4]
-        scales = torch.from_numpy(scales).to(torch.float32).to(device)
+        scales = torch.from_numpy(scales).to(torch.float32)
         scales = scales.unsqueeze(0) if scales.ndim == 2 else scales  # [1, N, 3]
-        opacities = torch.from_numpy(opacities).to(torch.float32).to(device)
+        opacities = torch.from_numpy(opacities).to(torch.float32)
         opacities = opacities.unsqueeze(0) if opacities.ndim == 1 else opacities  # [1, N]
-        colors = torch.from_numpy(colors).to(torch.float32).to(device)
+        colors = torch.from_numpy(colors).to(torch.float32)
         sh = colors.unsqueeze(0) if colors.ndim == 3 else sh  # [1, N, num_sh_coeffs, 3]
 
         # Load cameras
