@@ -46,7 +46,7 @@ def render_incremental_splats(
                 "scales": scales.unsqueeze(0),
                 "quats": quats.unsqueeze(0),
                 "opacities": opacities.unsqueeze(0),
-                "colors": rgb.unsqueeze(0),  # [1, N, 3]
+                "colors": rgb.unsqueeze(0).unsqueeze(1),  # [1, N, 1, 3]
             }
             print("DEBUG: means shape", splats["means"].shape)
             print("DEBUG: scales shape", splats["scales"].shape)
