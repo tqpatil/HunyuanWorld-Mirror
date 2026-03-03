@@ -48,11 +48,11 @@ def render_incremental_splats(
                 "opacities": opacities,
                 "colors": rgb,  # [N, 3]
             }
-                print("DEBUG: means shape", splats["means"].shape)
-                print("DEBUG: scales shape", splats["scales"].shape)
-                print("DEBUG: quats shape", splats["quats"].shape)
-                print("DEBUG: opacities shape", splats["opacities"].shape)
-                print("DEBUG: colors shape", splats["colors"].shape)
+            print("DEBUG: means shape", splats["means"].shape)
+            print("DEBUG: scales shape", splats["scales"].shape)
+            print("DEBUG: quats shape", splats["quats"].shape)
+            print("DEBUG: opacities shape", splats["opacities"].shape)
+            print("DEBUG: colors shape", splats["colors"].shape)
         else:
             # Ensure SH matches requested degree
             num_coeffs = (sh_degree + 1) ** 2
