@@ -48,6 +48,11 @@ def render_incremental_splats(
                 "opacities": opacities,
                 "colors": rgb,  # [N, 3]
             }
+                print("DEBUG: means shape", splats["means"].shape)
+                print("DEBUG: scales shape", splats["scales"].shape)
+                print("DEBUG: quats shape", splats["quats"].shape)
+                print("DEBUG: opacities shape", splats["opacities"].shape)
+                print("DEBUG: colors shape", splats["colors"].shape)
         else:
             # Ensure SH matches requested degree
             num_coeffs = (sh_degree + 1) ** 2
@@ -56,6 +61,11 @@ def render_incremental_splats(
                 sh = torch.cat([colors, pad], dim=1)
             else:
                 sh = colors[:, :num_coeffs, :]
+                print("DEBUG: means shape", splats["means"].shape)
+                print("DEBUG: scales shape", splats["scales"].shape)
+                print("DEBUG: quats shape", splats["quats"].shape)
+                print("DEBUG: opacities shape", splats["opacities"].shape)
+                print("DEBUG: sh shape", splats["sh"].shape)
             # Evaluate SH to RGB for each view direction
             # cam_poses: [V, 4, 4], get view directions for each view
             V = cam_poses.shape[0]

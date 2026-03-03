@@ -679,6 +679,16 @@ def save_incremental_splats_and_render(
             scales = pruned_splats["scales"].unsqueeze(0) if pruned_splats["scales"].ndim == 2 else pruned_splats["scales"]  # [1, N, 3]
             opacities = pruned_splats["opacities"].unsqueeze(0) if pruned_splats["opacities"].ndim == 1 else pruned_splats["opacities"]  # [1, N]
             sh = pruned_splats["sh"].unsqueeze(0) if pruned_splats["sh"].ndim == 3 else pruned_splats["sh"]  # [1, N, num_sh_coeffs, 3]
+            # Debug prints for direct comparison
+            print("DEBUG: means shape", means.shape)
+            print("DEBUG: scales shape", scales.shape)
+            print("DEBUG: quats shape", quats.shape)
+            print("DEBUG: opacities shape", opacities.shape)
+            if "colors" in pruned_splats:
+                colors = pruned_splats["colors"]
+                print("DEBUG: colors shape", colors.shape)
+            if "sh" in pruned_splats:
+                print("DEBUG: sh shape", sh.shape)
             try:
                 # cam_poses_subset and cam_intrs_subset are [B, V_subset, ...]
                 cams_c2w = cam_poses_subset.to(torch.float32)
