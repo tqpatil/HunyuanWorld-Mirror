@@ -38,6 +38,8 @@ class Rasterizer:
         height: int,
         **kwargs,
     ) -> Tuple[Tensor, Tensor, Dict]:
+        print("RASTERIZER: means shape", means.shape)
+        print("RASTERIZER: colors shape", colors.shape)
         render_colors, render_alphas, _ = rasterization(
             means=means,
             quats=quats,
