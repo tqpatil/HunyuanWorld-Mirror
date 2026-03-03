@@ -42,11 +42,11 @@ def render_incremental_splats(
             # Convert SH DC to RGB using SH2RGB utility
             rgb = SH2RGB(colors.reshape(-1, 3)).reshape(-1, 3)
             splats = {
-                "means": means.unsqueeze(0),
-                "scales": scales.unsqueeze(0),
-                "quats": quats.unsqueeze(0),
-                "opacities": opacities.unsqueeze(0),
-                "colors": rgb.unsqueeze(0),  # [1, N, 3]
+                "means": means,
+                "scales": scales,
+                "quats": quats,
+                "opacities": opacities,
+                "colors": rgb,  # [N, 3]
             }
         else:
             # Ensure SH matches requested degree
@@ -56,11 +56,11 @@ def render_incremental_splats(
             else:
                 sh = colors[:, :num_coeffs, :]
             splats = {
-                "means": means.unsqueeze(0),
-                "scales": scales.unsqueeze(0),
-                "quats": quats.unsqueeze(0),
-                "opacities": opacities.unsqueeze(0),
-                "sh": sh.unsqueeze(0),  # [1, N, num_coeffs, 3]
+                "means": means,
+                "scales": scales,
+                "quats": quats,
+                "opacities": opacities,
+                "sh": sh,  # [N, num_coeffs, 3]
             }
 
         # Load cameras
