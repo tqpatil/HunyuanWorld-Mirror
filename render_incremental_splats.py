@@ -108,12 +108,20 @@ def render_incremental_splats(
 
         # Render
         if sh_degree == 0:
-            # Pass arrays with batch dimension [1, N, ...] to rasterizer
+            # Ensure colors is [1, N, 1, 3] before rasterizer call
+            colors = rgb.unsqueeze(0).unsqueeze(2)  # [1, N, 1, 3]
+            splats = {
+                "means": means.unsqueeze(0),
+                "scales": scales.unsqueeze(0),
+                "quats": quats.unsqueeze(0),
+                "opacities": opacities.unsqueeze(0),
+                "colors": colors,
+            }
             print("DEBUG: means shape", splats["means"].shape)
             print("DEBUG: scales shape", splats["scales"].shape)
             print("DEBUG: quats shape", splats["quats"].shape)
             print("DEBUG: opacities shape", splats["opacities"].shape)
-            print("DEBUG: colors shape", splats["colors"].shape)
+            print("DEBUG: colors shape before rasterizer", splats["colors"].shape)
             print("DEBUG: cam_poses shape", cam_poses.shape)
             print("DEBUG: cam_intrs shape", cam_intrs.shape)
             print("DEBUG: width", W)
