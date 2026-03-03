@@ -62,7 +62,7 @@ def render_incremental_splats(
                     "scales": scales.unsqueeze(0).to(torch.float32),
                     "quats": quats.unsqueeze(0).to(torch.float32),
                     "opacities": opacities.unsqueeze(0).to(torch.float32),
-                    "colors": rgb.unsqueeze(0).to(torch.float32),  # [1, N, 3]
+                    "colors": rgb.unsqueeze(0).unsqueeze(1).to(torch.float32),  # [1, N, 1, 3]
                 }
             else:
                 num_coeffs = (sh_degree + 1) ** 2
@@ -81,7 +81,7 @@ def render_incremental_splats(
                     "scales": scales.unsqueeze(0).to(torch.float32),
                     "quats": quats.unsqueeze(0).to(torch.float32),
                     "opacities": opacities.unsqueeze(0).to(torch.float32),
-                    "colors": rgb_v.unsqueeze(0).to(torch.float32),  # [1, N, 3]
+                    "colors": rgb_v.unsqueeze(0).to(torch.float32),  # [1, N, K, 3] (already [N, K, 3])
                 }
 
             print(f"Rendering view {v} of {V} for splats_views_0to{end_view}")
