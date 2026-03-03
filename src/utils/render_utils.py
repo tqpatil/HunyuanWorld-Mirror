@@ -696,6 +696,19 @@ def save_incremental_splats_and_render(
 
                 colors_arg = sh if "sh" in pruned_splats else pruned_splats.get("colors")
 
+                print("DEBUG: means shape", means.shape)
+                print("DEBUG: scales shape", scales.shape)
+                print("DEBUG: quats shape", quats.shape)
+                print("DEBUG: opacities shape", opacities.shape)
+                if colors_arg is not None:
+                    print("DEBUG: colors shape", colors_arg.shape)
+                if "sh" in pruned_splats:
+                    print("DEBUG: sh shape", sh.shape)
+                print("DEBUG: cams_c2w shape", cams_c2w.shape)
+                print("DEBUG: cams_K shape", cams_K.shape)
+                print("DEBUG: width", W)
+                print("DEBUG: height", H)
+                print("DEBUG: sh_degree", gs_renderer.sh_degree if "sh" in pruned_splats else None)
                 render_colors, render_depths, _ = gs_renderer.rasterizer.rasterize_batches(
                     means, quats, scales, opacities,
                     colors_arg,

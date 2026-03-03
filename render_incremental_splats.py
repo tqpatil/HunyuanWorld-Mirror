@@ -114,6 +114,11 @@ def render_incremental_splats(
             print("DEBUG: quats shape", splats["quats"].shape)
             print("DEBUG: opacities shape", splats["opacities"].shape)
             print("DEBUG: colors shape", splats["colors"].shape)
+            print("DEBUG: cam_poses shape", cam_poses.shape)
+            print("DEBUG: cam_intrs shape", cam_intrs.shape)
+            print("DEBUG: width", W)
+            print("DEBUG: height", H)
+            print("DEBUG: sh_degree", sh_degree)
             render_colors, render_depths, _ = gs_renderer.rasterizer.rasterize_batches(
                 splats["means"], splats["quats"], splats["scales"], splats["opacities"],
                 splats["colors"],
