@@ -51,8 +51,8 @@ def render_incremental_splats(
         V = cam_poses.shape[0]
         for v in range(V):
             # Prepare per-view camera pose/intrinsics
-            cam_pose_v = cam_poses[v:v+1].unsqueeze(0).to(torch.float32)  # [1, 1, 4, 4]
-            cam_intr_v = cam_intrs[v:v+1].unsqueeze(0).to(torch.float32)  # [1, 1, 3, 3]
+            cam_pose_v = cam_poses[v:v+1].to(torch.float32)  # [1, 4, 4]
+            cam_intr_v = cam_intrs[v:v+1].to(torch.float32)  # [1, 3, 3]
 
             # Prepare splat batch
             if sh_degree == 0:
