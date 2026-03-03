@@ -100,6 +100,7 @@ def render_incremental_splats(
             )
         else:
             # ...existing code for SH...
+            pass
         V_out = render_colors.shape[1]
         for v in range(V_out):
             rgb = render_colors[0, v].clamp(0, 1)
