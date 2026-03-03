@@ -41,16 +41,28 @@ def render_incremental_splats(
         if sh_degree == 0:
             # Convert SH DC to RGB using SH2RGB utility
             rgb = SH2RGB(colors.reshape(-1, 3)).reshape(-1, 3)
-            sh = rgb[None, ...]  # [1, N, 3]
+            splats = {
+                "means": means.unsqueeze(0),
+                "scales": scales.unsqueeze(0),
+                "quats": quats.unsqueeze(0),
+                "opacities": opacities.unsqueeze(0),
+                "colors": rgb[None, ...],  # [1, N, 3]
+            }
         else:
             # Ensure SH matches requested degree
             num_coeffs = (sh_degree + 1) ** 2
             if colors.shape[1] < num_coeffs:
-                # Pad with zeros
                 pad = torch.zeros((colors.shape[0], num_coeffs - colors.shape[1], 3), device=colors.device)
                 sh = torch.cat([colors, pad], dim=1)[None, ...]
             else:
                 sh = colors[:, :num_coeffs, :][None, ...]  # [1, N, num_coeffs, 3]
+            splats = {
+                "means": means.unsqueeze(0),
+                "scales": scales.unsqueeze(0),
+                "quats": quats.unsqueeze(0),
+                "opacities": opacities.unsqueeze(0),
+                "sh": sh,
+            }
 
         # Load cameras
         cam_poses = np.load(cam_poses_path)["camera_poses"]
@@ -58,26 +70,24 @@ def render_incremental_splats(
         cam_poses = torch.from_numpy(cam_poses).to(device)
         cam_intrs = torch.from_numpy(cam_intrs).to(device)
 
-        # Prepare splats dict
-        splats = {
-            "means": means.unsqueeze(0),
-            "scales": scales.unsqueeze(0),
-            "quats": quats.unsqueeze(0),
-            "opacities": opacities.unsqueeze(0),
-            "sh": sh,
-        }
-
         # Create renderer
         gs_renderer = GaussianSplatRenderer(sh_degree=sh_degree).to(device)
 
         # Render
-        # try:
-        render_colors, render_depths, _ = gs_renderer.rasterizer.rasterize_batches(
-            splats["means"], splats["quats"], splats["scales"], splats["opacities"],
-            splats["sh"],
-            cam_poses.to(torch.float32), cam_intrs.to(torch.float32),
-            width=W, height=H, sh_degree=sh_degree,
-        )
+        if sh_degree == 0:
+            render_colors, render_depths, _ = gs_renderer.rasterizer.rasterize_batches(
+                splats["means"], splats["quats"], splats["scales"], splats["opacities"],
+                splats["colors"],
+                cam_poses.to(torch.float32), cam_intrs.to(torch.float32),
+                width=W, height=H, sh_degree=sh_degree,
+            )
+        else:
+            render_colors, render_depths, _ = gs_renderer.rasterizer.rasterize_batches(
+                splats["means"], splats["quats"], splats["scales"], splats["opacities"],
+                splats["sh"],
+                cam_poses.to(torch.float32), cam_intrs.to(torch.float32),
+                width=W, height=H, sh_degree=sh_degree,
+            )
         V_out = render_colors.shape[1]
         for v in range(V_out):
             rgb = render_colors[0, v].clamp(0, 1)
