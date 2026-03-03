@@ -108,7 +108,7 @@ def render_incremental_splats(
 
         # Render
         if sh_degree == 0:
-            # Pass full arrays without [0] indexing
+            # Pass arrays with batch dimension [1, N, ...] to rasterizer
             print("DEBUG: means shape", splats["means"].shape)
             print("DEBUG: scales shape", splats["scales"].shape)
             print("DEBUG: quats shape", splats["quats"].shape)
