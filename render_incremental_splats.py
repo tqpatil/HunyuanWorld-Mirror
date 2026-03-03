@@ -41,13 +41,12 @@ def render_incremental_splats(
         if sh_degree == 0:
             # Convert SH DC to RGB using SH2RGB utility
             rgb = SH2RGB(colors.reshape(-1, 3)).reshape(-1, 3)
-            colors_batch = rgb[None, ...] if rgb.ndim == 2 else rgb
             splats = {
-                "means": means.unsqueeze(0),
-                "scales": scales.unsqueeze(0),
-                "quats": quats.unsqueeze(0),
-                "opacities": opacities.unsqueeze(0),
-                "colors": colors_batch,  # [1, N, 3]
+                "means": means,
+                "scales": scales,
+                "quats": quats,
+                "opacities": opacities,
+                "colors": rgb,  # [N, 3]
             }
         else:
             # Ensure SH matches requested degree
@@ -91,21 +90,16 @@ def render_incremental_splats(
         gs_renderer = GaussianSplatRenderer(sh_degree=sh_degree).to(device)
 
         # Render
-        # Always pass [B, V, N, 3] colors to renderer
-        print("DEBUG: colors shape", splats["colors"].shape)
-        B = splats["means"].shape[0]
-        V = cam_poses.shape[0]
-        N = splats["means"].shape[1]
-        # If colors shape is [1, N, 3], expand to [1, V, N, 3] for consistency
-        colors = splats["colors"]
-        if colors.ndim == 3:
-            colors = colors.unsqueeze(1).expand(B, V, N, 3)
-        render_colors, render_depths, _ = gs_renderer.rasterizer.rasterize_batches(
-            splats["means"], splats["quats"], splats["scales"], splats["opacities"],
-            colors,
-            cam_poses.to(torch.float32), cam_intrs.to(torch.float32),
-            width=W, height=H, sh_degree=sh_degree,
-        )
+        if sh_degree == 0:
+            print("DEBUG: colors shape", splats["colors"].shape)
+            render_colors, render_depths, _ = gs_renderer.rasterizer.rasterize_batches(
+                splats["means"], splats["quats"], splats["scales"], splats["opacities"],
+                splats["colors"],
+                cam_poses.to(torch.float32), cam_intrs.to(torch.float32),
+                width=W, height=H, sh_degree=sh_degree,
+            )
+        else:
+            # ...existing code for SH...
         V_out = render_colors.shape[1]
         for v in range(V_out):
             rgb = render_colors[0, v].clamp(0, 1)
