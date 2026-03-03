@@ -108,13 +108,13 @@ def render_incremental_splats(
 
         # Render
         if sh_degree == 0:
-            # Ensure colors is [1, N, 1, 3] before rasterizer call
-            colors = rgb.unsqueeze(0).unsqueeze(2)  # [1, N, 1, 3]
+            # Ensure colors is [1, N, 1, 3] before rasterizer call and all tensors are float32
+            colors = rgb.unsqueeze(0).unsqueeze(2).to(torch.float32)  # [1, N, 1, 3]
             splats = {
-                "means": means.unsqueeze(0),
-                "scales": scales.unsqueeze(0),
-                "quats": quats.unsqueeze(0),
-                "opacities": opacities.unsqueeze(0),
+                "means": means.unsqueeze(0).to(torch.float32),
+                "scales": scales.unsqueeze(0).to(torch.float32),
+                "quats": quats.unsqueeze(0).to(torch.float32),
+                "opacities": opacities.unsqueeze(0).to(torch.float32),
                 "colors": colors,
             }
             print("DEBUG: means shape", splats["means"].shape)
