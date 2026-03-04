@@ -2,7 +2,7 @@ import torch
 import numpy as np
 from pathlib import Path
 from PIL import Image
-from src.renderers.gaussian_splat_renderer import GaussianSplatRenderer
+from src.models.models.rasterization import GaussianSplatRenderer
 from src.utils.save_utils import load_gs_ply
 def render_incremental_splats(
     incremental_dir: Path,
