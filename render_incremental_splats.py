@@ -4,6 +4,8 @@ from pathlib import Path
 from PIL import Image
 from src.models.models.rasterization import GaussianSplatRenderer
 from src.utils.load_gs_ply import load_gs_ply
+import argparse
+
 def render_incremental_splats(
     incremental_dir: Path,
     output_dir: Path,
@@ -95,3 +97,25 @@ def render_incremental_splats(
             Image.fromarray(depth_img).save(str(renders_dir / f"render_view_{v:02d}_depth.png"))
             print(f"   Rendered and saved view {v}")
         print(f"Renders saved to {renders_dir}")
+
+def main():
+    parser = argparse.ArgumentParser(description="Render incremental splats from saved PLY and camera files.")
+    parser.add_argument("--incremental_dir", type=str, required=True, help="Path to incremental_splats folder")
+    parser.add_argument("--output_dir", type=str, required=True, help="Output directory for renders")
+    parser.add_argument("--height", type=int, required=True, help="Image height")
+    parser.add_argument("--width", type=int, required=True, help="Image width")
+    parser.add_argument("--sh_degree", type=int, default=0, help="Spherical harmonics degree")
+    parser.add_argument("--device", type=str, default="cuda", help="Torch device")
+    args = parser.parse_args()
+
+    render_incremental_splats(
+        incremental_dir=args.incremental_dir,
+        output_dir=args.output_dir,
+        H=args.height,
+        W=args.width,
+        sh_degree=args.sh_degree,
+        device=args.device,
+    )
+
+if __name__ == "__main__":
+    main()
