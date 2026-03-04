@@ -74,14 +74,14 @@ def render_incremental_splats(
 
             for start in range(0, N_total, chunk_size):
                 end = min(start + chunk_size, N_total)
-                means_chunk = means[:, start:end].to(device)
-                quats_chunk = quats[:, start:end].to(device)
-                scales_chunk = scales[:, start:end].to(device)
-                opacities_chunk = opacities[:, start:end].to(device)
+                means_chunk = means[:, start:end]  # [1, chunk, 3]
+                quats_chunk = quats[:, start:end]  # [1, chunk, 4]
+                scales_chunk = scales[:, start:end]  # [1, chunk, 3]
+                opacities_chunk = opacities[:, start:end]  # [1, chunk]
                 if sh is not None:
-                    colors_chunk = colors_arg[:, start:end].to(device)
+                    colors_chunk = colors_arg[:, start:end]  # [1, chunk, K, 3]
                 else:
-                    colors_chunk = colors_arg[:, start:end].to(device)
+                    colors_chunk = colors_arg[:, start:end]  # [1, chunk, 3]
 
                 with torch.no_grad():
                     render_colors, render_depths, render_alphas = gs_renderer.rasterizer.rasterize_batches(
