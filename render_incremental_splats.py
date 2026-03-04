@@ -41,18 +41,10 @@ def render_incremental_splats(
         opacities = torch.from_numpy(opacities).to(torch.float32).to(device)
         opacities = opacities.unsqueeze(0) if opacities.ndim == 1 else opacities  # [1, N]
         colors = torch.from_numpy(colors).to(torch.float32).to(device)
+        sh = colors.unsqueeze(0) if colors.ndim == 3 else sh  # [1, N, num_sh_coeffs, 3]
         # Determine if colors represent SH coefficients or RGB based on sh_degree
-        if sh_degree > 0:
-            # Assume colors is [N, K, 3] where K is num_sh_coeffs
-            sh = colors.unsqueeze(0)  # [1, N, K, 3]
-            colors_arg = sh
-            use_sh = True
-        else:
-            # Assume colors is [N, 3] RGB
-            sh = None
-            colors_arg = colors.unsqueeze(0)  # [1, N, 3]
-            use_sh = False
-        # Add batch dimension to other tensors
+        colors_arg = sh if sh_degree > 0 else colors  # Pass SH if degree > 0, else pass RGB
+        use_sh = sh_degree > 0
         # Load cameras
         cam_poses_np = np.load(cam_poses_path)["camera_poses"]  # [B, V, 4, 4], assume B=1
         cam_intrs_np = np.load(cam_intrs_path)["camera_intrs"]  # [B, V, 3, 3], assume B=1
