@@ -33,9 +33,13 @@ def render_incremental_splats(
         # Load splats
         means, scales, quats, colors, opacities = load_gs_ply(ply_path)
         means = torch.from_numpy(means).to(torch.float32).to(device)
+        means = means.unsqueeze(0) if means.ndim == 2 else means  # [1, N, 3/4]
         quats = torch.from_numpy(quats).to(torch.float32).to(device)
+        quats = quats.unsqueeze(0) if quats.ndim == 2 else quats  # [1, N, 4]
         scales = torch.from_numpy(scales).to(torch.float32).to(device)
+        scales = scales.unsqueeze(0) if scales.ndim == 2 else scales  # [1, N, 3]
         opacities = torch.from_numpy(opacities).to(torch.float32).to(device)
+        opacities = opacities.unsqueeze(0) if opacities.ndim == 1 else opacities  # [1, N]
         colors = torch.from_numpy(colors).to(torch.float32).to(device)
         # Determine if colors represent SH coefficients or RGB based on sh_degree
         if sh_degree > 0:
@@ -49,10 +53,6 @@ def render_incremental_splats(
             colors_arg = colors.unsqueeze(0)  # [1, N, 3]
             use_sh = False
         # Add batch dimension to other tensors
-        means = means.unsqueeze(0)  # [1, N, 3]
-        quats = quats.unsqueeze(0)  # [1, N, 4]
-        scales = scales.unsqueeze(0)  # [1, N, 3]
-        opacities = opacities.unsqueeze(0)  # [1, N]
         # Load cameras
         cam_poses_np = np.load(cam_poses_path)["camera_poses"]  # [B, V, 4, 4], assume B=1
         cam_intrs_np = np.load(cam_intrs_path)["camera_intrs"]  # [B, V, 3, 3], assume B=1
