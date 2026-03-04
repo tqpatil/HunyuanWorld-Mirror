@@ -46,8 +46,12 @@ def render_incremental_splats(
         # Load cameras
         cam_poses = np.load(cam_poses_path)["camera_poses"]
         cam_intrs = np.load(cam_intrs_path)["camera_intrs"]
+        print(f"Loaded from {cam_poses_path}: {cam_poses.shape}")
+        print(f"Loaded from {cam_intrs_path}: {cam_intrs.shape}")
         cam_poses = torch.from_numpy(cam_poses).to(device)
         cam_intrs = torch.from_numpy(cam_intrs).to(device)
+        print(f"Loaded cam_poses shape: {cam_poses.shape}")
+        print(f"Loaded cam_intrs shape: {cam_intrs.shape}")
 
         # Create renderer
         gs_renderer = GaussianSplatRenderer(sh_degree=sh_degree).to(device)
