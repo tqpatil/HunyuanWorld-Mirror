@@ -1,12 +1,9 @@
-import argparse
-from pathlib import Path
-import numpy as np
 import torch
+import numpy as np
+from pathlib import Path
 from PIL import Image
-from src.models.models.rasterization import GaussianSplatRenderer
-from src.utils.load_gs_ply import load_gs_ply
-from src.models.utils.sh_utils import SH2RGB, eval_sh
-
+from src.renderers.gaussian_splat_renderer import GaussianSplatRenderer
+from src.utils.save_utils import load_gs_ply
 def render_incremental_splats(
     incremental_dir: Path,
     output_dir: Path,
@@ -18,9 +15,10 @@ def render_incremental_splats(
     incremental_dir = Path(incremental_dir)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-
     # Find all splat PLY files and corresponding camera/intrinsics
     ply_files = sorted(incremental_dir.glob('splats_views_0to*.ply'))
+    # Create renderer once outside the loop (efficiency)
+    gs_renderer = GaussianSplatRenderer(sh_degree=sh_degree).to(device)
     for ply_path in ply_files:
         # Extract view index
         view_str = ply_path.stem.split('_')[-1]
@@ -29,105 +27,74 @@ def render_incremental_splats(
         cam_intrs_path = incremental_dir / f"camera_intrs_views_0to{end_view}.npz"
         renders_dir = output_dir / f"renders_views_0to{end_view}"
         renders_dir.mkdir(exist_ok=True)
-
         # Load splats
         means, scales, quats, colors, opacities = load_gs_ply(ply_path)
         means = torch.from_numpy(means).to(torch.float32).to(device)
-        means = means.unsqueeze(0) if means.ndim == 2 else means  # [1, N, 3/4]
         quats = torch.from_numpy(quats).to(torch.float32).to(device)
-        quats = quats.unsqueeze(0) if quats.ndim == 2 else quats  # [1, N, 4]
         scales = torch.from_numpy(scales).to(torch.float32).to(device)
-        scales = scales.unsqueeze(0) if scales.ndim == 2 else scales  # [1, N, 3]
         opacities = torch.from_numpy(opacities).to(torch.float32).to(device)
-        opacities = opacities.unsqueeze(0) if opacities.ndim == 1 else opacities  # [1, N]
         colors = torch.from_numpy(colors).to(torch.float32).to(device)
-        sh = colors.unsqueeze(0) if colors.ndim == 3 else sh  # [1, N, num_sh_coeffs, 3]
-
+        # Determine if colors represent SH coefficients or RGB based on sh_degree
+        if sh_degree > 0:
+            # Assume colors is [N, K, 3] where K is num_sh_coeffs
+            sh = colors.unsqueeze(0)  # [1, N, K, 3]
+            colors_arg = sh
+            use_sh = True
+        else:
+            # Assume colors is [N, 3] RGB
+            sh = None
+            colors_arg = colors.unsqueeze(0)  # [1, N, 3]
+            use_sh = False
+        # Add batch dimension to other tensors
+        means = means.unsqueeze(0)  # [1, N, 3]
+        quats = quats.unsqueeze(0)  # [1, N, 4]
+        scales = scales.unsqueeze(0)  # [1, N, 3]
+        opacities = opacities.unsqueeze(0)  # [1, N]
         # Load cameras
-        cam_poses = np.load(cam_poses_path)["camera_poses"]
-        cam_intrs = np.load(cam_intrs_path)["camera_intrs"]
-        print(f"Loaded from {cam_poses_path}: {cam_poses.shape}")
-        print(f"Loaded from {cam_intrs_path}: {cam_intrs.shape}")
-        cam_poses = torch.from_numpy(cam_poses).to(device)
-        cam_intrs = torch.from_numpy(cam_intrs).to(device)
-        print(f"Loaded cam_poses shape: {cam_poses.shape}")
-        print(f"Loaded cam_intrs shape: {cam_intrs.shape}")
-
-        # Create renderer
-        gs_renderer = GaussianSplatRenderer(sh_degree=sh_degree).to(device)
-
-        # Render each view one at a time and save
-        V = cam_poses.shape[0]
-        chunk_size = 2000  # Reduce chunk size for lower memory usage
-        N_total = means.shape[1]
-        for v in range(V):
-            cam_pose_v = cam_poses[:,v:v+1, :, :].to(torch.float32)  # [1, 4, 4]
-            cam_intr_v = cam_intrs[:, v:v+1, :, :].to(torch.float32)  # [1, 3, 3]
-            cams_c2w = cam_pose_v
-            cams_K = cam_intr_v
-
-            colors_arg = sh if sh is not None else colors
-
-            rgb_accum = None
-            depth_accum = None
-            alpha_accum = None
-
-            for start in range(0, N_total, chunk_size):
-                end = min(start + chunk_size, N_total)
-                means_chunk = means[:, start:end]  # [1, chunk, 3]
-                quats_chunk = quats[:, start:end]  # [1, chunk, 4]
-                scales_chunk = scales[:, start:end]  # [1, chunk, 3]
-                opacities_chunk = opacities[:, start:end]  # [1, chunk]
-                if sh is not None:
-                    colors_chunk = colors_arg[:, start:end]  # [1, chunk, K, 3]
-                else:
-                    colors_chunk = colors_arg[:, start:end]  # [1, chunk, 3]
-
-                with torch.no_grad():
-                    render_colors, render_depths, render_alphas = gs_renderer.rasterizer.rasterize_batches(
-                        means_chunk, quats_chunk, scales_chunk, opacities_chunk,
-                        colors_chunk,
-                        cams_c2w, cams_K,
-                        width=W, height=H,
-                        sh_degree=gs_renderer.sh_degree if sh is not None else None,
-                    )
-
-                alpha = render_alphas[0, 0, :, :, 0].unsqueeze(-1)  # [H, W, 1]
-                if rgb_accum is None:
-                    rgb_accum = render_colors[0, 0].cpu()
-                    depth_accum = render_depths[0, 0, :, :, 0].cpu()
-                    alpha_accum = render_alphas[0, 0, :, :, 0].cpu()
-                else:
-                    rgb_accum = rgb_accum * (1 - alpha.cpu()) + render_colors[0, 0].cpu() * alpha.cpu()
-                    depth_accum = depth_accum * (1 - render_alphas[0, 0, :, :, 0].cpu()) + render_depths[0, 0, :, :, 0].cpu() * render_alphas[0, 0, :, :, 0].cpu()
-                    alpha_accum = alpha_accum + render_alphas[0, 0, :, :, 0].cpu()
-                torch.cuda.empty_cache()
-
-            # Save RGB
-            rgb_img = (rgb_accum.clamp(0, 1) * 255).to(torch.uint8).cpu().numpy()
-            Image.fromarray(rgb_img).save(str(renders_dir / f"render_view_{v:02d}_rgb.png"))
-
-            # Save depth
-            depth_normalized = (depth_accum.clamp(0, None) - depth_accum.min()) / (depth_accum.max() - depth_accum.min() + 1e-8)
-            depth_img = (depth_normalized * 255).to(torch.uint8).cpu().numpy()
-            Image.fromarray(depth_img).save(str(renders_dir / f"render_view_{v:02d}_depth.png"))
-            print(f"Saved render and depth for view {v} in splats_views_0to{end_view}")
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Render incremental splats from saved PLY and camera files.")
-    parser.add_argument("--incremental_dir", type=str, required=True, help="Path to incremental_splats folder")
-    parser.add_argument("--output_dir", type=str, required=True, help="Output directory for renders")
-    parser.add_argument("--height", type=int, required=True, help="Image height")
-    parser.add_argument("--width", type=int, required=True, help="Image width")
-    parser.add_argument("--sh_degree", type=int, default=0, help="Spherical harmonics degree")
-    parser.add_argument("--device", type=str, default="cuda", help="Torch device")
-    args = parser.parse_args()
-
-    render_incremental_splats(
-        incremental_dir=args.incremental_dir,
-        output_dir=args.output_dir,
-        H=args.height,
-        W=args.width,
-        sh_degree=args.sh_degree,
-        device=args.device,
-    )
+        cam_poses_np = np.load(cam_poses_path)["camera_poses"]  # [B, V, 4, 4], assume B=1
+        cam_intrs_np = np.load(cam_intrs_path)["camera_intrs"]  # [B, V, 3, 3], assume B=1
+        cam_poses = torch.from_numpy(cam_poses_np).to(device).to(torch.float32)
+        cam_intrs = torch.from_numpy(cam_intrs_np).to(device).to(torch.float32)
+        # Prepare for rendering (match the batch rendering style from working code)
+        cams_c2w = cam_poses  # [1, V, 4, 4]
+        cams_K = cam_intrs    # [1, V, 3, 3]
+        # Debug prints (optional, for matching working code style)
+        print(f"Rendering for splats_views_0to{end_view}")
+        print("DEBUG: means shape", means.shape)
+        print("DEBUG: scales shape", scales.shape)
+        print("DEBUG: quats shape", quats.shape)
+        print("DEBUG: opacities shape", opacities.shape)
+        if colors_arg is not None:
+            print("DEBUG: colors_arg shape", colors_arg.shape)
+        if sh is not None:
+            print("DEBUG: sh shape", sh.shape)
+        print("DEBUG: cams_c2w shape", cams_c2w.shape)
+        print("DEBUG: cams_K shape", cams_K.shape)
+        print("DEBUG: width", W)
+        print("DEBUG: height", H)
+        print("DEBUG: sh_degree", gs_renderer.sh_degree if use_sh else None)
+        # Render all views at once (matching working code)
+        render_colors, render_depths, _ = gs_renderer.rasterizer.rasterize_batches(
+            means, quats, scales, opacities,
+            colors_arg,
+            cams_c2w, cams_K,
+            width=W, height=H,
+            sh_degree=gs_renderer.sh_degree if use_sh else None,
+        )
+        # render_colors: [B, V, H, W, 3], render_depths: [B, V, H, W, 1]
+        V_out = render_colors.shape[1]
+        for v in range(V_out):
+            try:
+                # Save RGB
+                rgb = render_colors[0, v].clamp(0, 1)
+                rgb_img = (rgb * 255).to(torch.uint8).cpu().numpy()
+                Image.fromarray(rgb_img).save(str(renders_dir / f"render_view_{v:02d}_rgb.png"))
+                # Save depth
+                depth = render_depths[0, v, :, :, 0].clamp(0, None)
+                depth_normalized = (depth - depth.min()) / (depth.max() - depth.min() + 1e-8)
+                depth_img = (depth_normalized * 255).to(torch.uint8).cpu().numpy()
+                Image.fromarray(depth_img).save(str(renders_dir / f"render_view_{v:02d}_depth.png"))
+                print(f"   Rendered and saved view {v}")
+            except Exception as e:
+                print(f"   Failed to save render for view {v}: {e}")
+        print(f"Renders saved to {renders_dir}")
