@@ -61,8 +61,8 @@ def render_incremental_splats(
         chunk_size = 2000  # Reduce chunk size for lower memory usage
         N_total = means.shape[1]
         for v in range(V):
-            cam_pose_v = cam_poses[v:v+1].to(torch.float32)
-            cam_intr_v = cam_intrs[v:v+1].to(torch.float32)
+            cam_pose_v = cam_poses[0, v:v+1].to(torch.float32)  # [1, 4, 4]
+            cam_intr_v = cam_intrs[0, v:v+1].to(torch.float32)  # [1, 3, 3]
             cams_c2w = cam_pose_v
             cams_K = cam_intr_v
 
