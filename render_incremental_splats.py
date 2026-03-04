@@ -19,6 +19,7 @@ def render_incremental_splats(
     ply_files = sorted(incremental_dir.glob('splats_views_0to*.ply'))
     # Create renderer once outside the loop (efficiency)
     gs_renderer = GaussianSplatRenderer(sh_degree=sh_degree).to(device)
+    print(len(ply_files), "incremental splat files found for rendering.")
     for ply_path in ply_files:
         # Extract view index
         view_str = ply_path.stem.split('_')[-1]
