@@ -54,75 +54,57 @@ def render_incremental_splats(
 
         # Render each view one at a time and save
         V = cam_poses.shape[0]
+        chunk_size = 2000  # Reduce chunk size for lower memory usage
+        N_total = means.shape[1]
         for v in range(V):
-            # Prepare per-view camera pose/intrinsics
-            cam_pose_v = cam_poses[v:v+1].to(torch.float32)  # [1, 4, 4]
-            cam_intr_v = cam_intrs[v:v+1].to(torch.float32)  # [1, 3, 3]
+            cam_pose_v = cam_poses[v:v+1].to(torch.float32)
+            cam_intr_v = cam_intrs[v:v+1].to(torch.float32)
             cams_c2w = cam_pose_v
             cams_K = cam_intr_v
 
             colors_arg = sh if sh is not None else colors
 
-            print("DEBUG: means shape", means.shape)
-            print("DEBUG: scales shape", scales.shape)
-            print("DEBUG: quats shape", quats.shape)
-            print("DEBUG: opacities shape", opacities.shape)
-            if colors_arg is not None:
-                print("DEBUG: colors shape", colors_arg.shape)
-            if sh is not None:
-                print("DEBUG: sh shape", sh.shape)
-            print("DEBUG: cams_c2w shape", cams_c2w.shape)
-            print("DEBUG: cams_K shape", cams_K.shape)
-            print("DEBUG: width", W)
-            print("DEBUG: height", H)
-            print("DEBUG: sh_degree", gs_renderer.sh_degree if sh is not None else None)
-            # Prepare splat batch
-            # if sh_degree == 0:
-            #     rgb = SH2RGB(colors.reshape(-1, 3)).reshape(-1, 3)
-            #     splats = {
-            #         "means": means.unsqueeze(0).to(torch.float32),
-            #         "scales": scales.unsqueeze(0).to(torch.float32),
-            #         "quats": quats.unsqueeze(0).to(torch.float32),
-            #         "opacities": opacities.unsqueeze(0).to(torch.float32),
-            #         "colors": rgb.unsqueeze(0).to(torch.float32),  # [1, N, 3]
-            #     }
-            # else:
-            #     num_coeffs = (sh_degree + 1) ** 2
-            #     if colors.shape[1] < num_coeffs:
-            #         pad = torch.zeros((colors.shape[0], num_coeffs - colors.shape[1], 3), device=colors.device)
-            #         sh = torch.cat([colors, pad], dim=1)
-            #     else:
-            #         sh = colors[:, :num_coeffs, :]
-            #     # Evaluate SH for this view direction
-            #     view_dir = cam_poses[v, :3, 2]
-            #     view_dir = -view_dir / (view_dir.norm() + 1e-8)
-            #     dirs = view_dir.expand(sh.shape[0], 3)
-            #     rgb_v = eval_sh(sh_degree, sh, dirs)  # [N, 3]
-            #     splats = {
-            #         "means": means.unsqueeze(0).to(torch.float32),
-            #         "scales": scales.unsqueeze(0).to(torch.float32),
-            #         "quats": quats.unsqueeze(0).to(torch.float32),
-            #         "opacities": opacities.unsqueeze(0).to(torch.float32),
-            #         "colors": rgb_v.unsqueeze(0).to(torch.float32),  # [1, N, K, 3] (already [N, K, 3])
-            #     }
+            rgb_accum = None
+            depth_accum = None
+            alpha_accum = None
 
-            print(f"Rendering view {v} of {V} for splats_views_0to{end_view}")
-            render_colors, render_depths, _ = gs_renderer.rasterizer.rasterize_batches(
-                    means, quats, scales, opacities,
-                    colors_arg,
-                    cams_c2w, cams_K,
-                    width=W, height=H,
-                    sh_degree=gs_renderer.sh_degree if sh is not None else None,
-            )
+            for start in range(0, N_total, chunk_size):
+                end = min(start + chunk_size, N_total)
+                means_chunk = means[:, start:end].to(device)
+                quats_chunk = quats[:, start:end].to(device)
+                scales_chunk = scales[:, start:end].to(device)
+                opacities_chunk = opacities[:, start:end].to(device)
+                if sh is not None:
+                    colors_chunk = colors_arg[:, start:end].to(device)
+                else:
+                    colors_chunk = colors_arg[:, start:end].to(device)
+
+                with torch.no_grad():
+                    render_colors, render_depths, render_alphas = gs_renderer.rasterizer.rasterize_batches(
+                        means_chunk, quats_chunk, scales_chunk, opacities_chunk,
+                        colors_chunk,
+                        cams_c2w, cams_K,
+                        width=W, height=H,
+                        sh_degree=gs_renderer.sh_degree if sh is not None else None,
+                    )
+
+                alpha = render_alphas[0, 0, :, :, 0].unsqueeze(-1)  # [H, W, 1]
+                if rgb_accum is None:
+                    rgb_accum = render_colors[0, 0].cpu()
+                    depth_accum = render_depths[0, 0, :, :, 0].cpu()
+                    alpha_accum = render_alphas[0, 0, :, :, 0].cpu()
+                else:
+                    rgb_accum = rgb_accum * (1 - alpha.cpu()) + render_colors[0, 0].cpu() * alpha.cpu()
+                    depth_accum = depth_accum * (1 - render_alphas[0, 0, :, :, 0].cpu()) + render_depths[0, 0, :, :, 0].cpu() * render_alphas[0, 0, :, :, 0].cpu()
+                    alpha_accum = alpha_accum + render_alphas[0, 0, :, :, 0].cpu()
+                torch.cuda.empty_cache()
 
             # Save RGB
-            rgb = render_colors[0, 0].clamp(0, 1)
-            rgb_img = (rgb * 255).to(torch.uint8).cpu().numpy()
+            rgb_img = (rgb_accum.clamp(0, 1) * 255).to(torch.uint8).cpu().numpy()
             Image.fromarray(rgb_img).save(str(renders_dir / f"render_view_{v:02d}_rgb.png"))
 
             # Save depth
-            depth = render_depths[0, 0, :, :, 0].clamp(0, None)
-            depth_normalized = (depth - depth.min()) / (depth.max() - depth.min() + 1e-8)
+            depth_normalized = (depth_accum.clamp(0, None) - depth_accum.min()) / (depth_accum.max() - depth_accum.min() + 1e-8)
             depth_img = (depth_normalized * 255).to(torch.uint8).cpu().numpy()
             Image.fromarray(depth_img).save(str(renders_dir / f"render_view_{v:02d}_depth.png"))
             print(f"Saved render and depth for view {v} in splats_views_0to{end_view}")
