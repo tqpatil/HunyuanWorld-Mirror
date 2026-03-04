@@ -3,7 +3,7 @@ import numpy as np
 from pathlib import Path
 from PIL import Image
 from src.models.models.rasterization import GaussianSplatRenderer
-from src.utils.save_utils import load_gs_ply
+from src.utils.load_gs_ply import load_gs_ply
 def render_incremental_splats(
     incremental_dir: Path,
     output_dir: Path,
