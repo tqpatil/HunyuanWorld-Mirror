@@ -104,12 +104,12 @@ def main():
         colors_arg = sh if "sh" in splats else splats.get("colors") if "colors" in splats else None
 
         # Get number of views
-        V = cam_poses.shape[0]
+        V = cam_poses.shape[1]
         print("[DEBUG]: Cam poses shape:", cam_poses.shape)
         # Render one view at a time to reduce memory usage
         for v in range(V):
-            cam_c2w_single = cam_poses[v:v+1]  # [1, 4, 4]
-            cam_K_single = cam_intrs[v:v+1]    # [1, 3, 3]
+            cam_c2w_single = cam_poses[:, v:v+1]  # [1, 4, 4]
+            cam_K_single = cam_intrs[:, v:v+1]    # [1, 3, 3]
 
             rgb_images, depth_images, _ = renderer.rasterizer.rasterize_batches(
                 means, quats, scales, opacities,
