@@ -95,7 +95,8 @@ def main():
         means = splats["means"].unsqueeze(0) if splats["means"].ndim == 2 else splats["means"]  # [1, N, 3/4]
         quats = splats["quats"].unsqueeze(0) if splats["quats"].ndim == 2 else splats["quats"]  # [1, N, 4]
         scales = splats["scales"].unsqueeze(0) if splats["scales"].ndim == 2 else splats["scales"]  # [1, N, 3]
-        opacities = splats["opacities"].unsqueeze(0) if splats["opacities"].ndim == 1 else splats["opacities"]  # [1, N]
+        opacities = splats["opacities"].squeeze(-1).unsqueeze(0) # [1, N]
+        # if splats["opacities"].ndim == 1 else splats["opacities"]  
         sh = splats["sh"].unsqueeze(0) if splats["sh"].ndim == 3 else splats["sh"]  # [1, N, num_sh_coeffs, 3]
         # Render
         if "colors" in splats:
