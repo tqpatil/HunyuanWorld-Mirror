@@ -115,6 +115,7 @@ def main():
         print("[DEBUG]: cam_intrs shape:", cam_intrs.shape)
         print("[DEBUG]: SH shape:", sh.shape)
         print("[DEBUG]: Color args shape:", colors_arg.shape if colors_arg is not None else "None")
+        colors_arg = colors_arg.squeeze(2)
         # Render one view at a time to reduce memory usage
         for v in range(V):
             cam_c2w_single = cam_poses[:, v:v+1]  # [1, 4, 4]
