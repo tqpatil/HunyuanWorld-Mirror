@@ -126,20 +126,21 @@ def main():
                 width=args.width, height=args.height,
                 sh_degree=renderer.sh_degree if "sh" in splats else None,
             )
+            V_out = rgb_images.shape[1]
+            for v in range(V_out):
+                try:
+                    rgb = rgb_images[0, v].clamp(0, 1)  # [H, W, 3]
+                    rgb_img = (rgb * 255).to(torch.uint8).cpu().numpy()
+                    Image.fromarray(rgb_img).save(os.path.join(args.output_dir, f"render_view_{v:02d}_rgb.png"))
 
-            try:
-                rgb = rgb_images[0, 0].clamp(0, 1)  # [H, W, 3]
-                rgb_img = (rgb * 255).to(torch.uint8).cpu().numpy()
-                Image.fromarray(rgb_img).save(os.path.join(args.output_dir, f"render_view_{v:02d}_rgb.png"))
+                    depth = depth_images[0, v, :, :, 0].clamp(0, None)  # [H, W]
+                    depth_normalized = (depth - depth.min()) / (depth.max() - depth.min() + 1e-8)
+                    depth_img = (depth_normalized * 255).to(torch.uint8).cpu().numpy()
+                    Image.fromarray(depth_img).save(os.path.join(args.output_dir, f"render_view_{v:02d}_depth.png"))
 
-                depth = depth_images[0, 0, :, :, 0].clamp(0, None)  # [H, W]
-                depth_normalized = (depth - depth.min()) / (depth.max() - depth.min() + 1e-8)
-                depth_img = (depth_normalized * 255).to(torch.uint8).cpu().numpy()
-                Image.fromarray(depth_img).save(os.path.join(args.output_dir, f"render_view_{v:02d}_depth.png"))
-
-                print(f"   Rendered view {v}")
-            except Exception as e:
-                print(f"  Failed to save render for view {v}: {e}")
+                    print(f"   Rendered view {v}")
+                except Exception as e:
+                    print(f"  Failed to save render for view {v}: {e}")
 
             # Deallocate per-view tensors to free memory
             del rgb_images, depth_images
