@@ -33,8 +33,8 @@ def load_gs_ply(ply_path, sh_degree, device):
 
 def main():
     parser = argparse.ArgumentParser(description='Render incremental splats from PLY files.')
-    parser.add_argument('--incremental_dir', type=str, help='Path to incremental_splats folder')
-    parser.add_argument('--output_dir', type=str, help='Directory to save renders')
+    parser.add_argument('--incremental_dir', type=str,required=True, help='Path to incremental_splats folder')
+    parser.add_argument('--output_dir', type=str, required=True, help='Directory to save renders')
     parser.add_argument('--height', type=int, required=True, help='Render image height')
     parser.add_argument('--width', type=int, required=True, help='Render image width')
     parser.add_argument('--device', type=str, default='cuda', help='Device to use (cuda/cpu)')
