@@ -44,7 +44,7 @@ def main():
 
     os.makedirs(args.output_dir, exist_ok=True)
 
-    pattern = re.compile(r'^splats_views_\d+to\d+\.ply$')
+    pattern = re.compile(r".*0to(\d+)\.ply")
 
     # Original code with added regex filtering
     ply_files = sorted([f for f in os.listdir(args.incremental_dir) if pattern.match(f)])
