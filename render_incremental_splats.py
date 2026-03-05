@@ -104,12 +104,12 @@ def main():
         colors_arg = sh if "sh" in splats else splats.get("colors") if "colors" in splats else None
 
         # Get number of views
-        V = cam_poses.shape[1]
         print("[DEBUG]: Cam poses shape:", cam_poses.shape)
         print("[DEBUG]: means shape:", means.shape)
         print("[DEBUG]: quats shape:", quats.shape)
         print("[DEBUG]: scales shape:", scales.shape)
         print("[DEBUG]: opacities shape:", opacities.shape)
+        V = cam_poses.shape[1]  # Number of views from camera poses
         if colors_arg is not None:
             print("[DEBUG]: colors_arg shape:", colors_arg.shape)
         print("[DEBUG]: cam_intrs shape:", cam_intrs.shape)
@@ -144,7 +144,6 @@ def main():
             del rgb_images, depth_images
             if args.device == 'cuda':
                 torch.cuda.empty_cache()
-
         # Deallocate splats and camera data after processing all views for this ply_file
         del splats, cam_poses, cam_intrs, means, quats, scales, opacities, sh
         if colors_arg is not None:
