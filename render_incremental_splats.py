@@ -1,5 +1,6 @@
 import os
 import argparse
+import re
 import numpy as np
 import torch
 from tqdm import tqdm
@@ -43,16 +44,23 @@ def main():
 
     os.makedirs(args.output_dir, exist_ok=True)
 
-    ply_files = sorted([f for f in os.listdir(args.incremental_dir) if f.endswith('.ply')])
-    if not ply_files:
-        print('No PLY files found in', args.incremental_dir)
-        return
+    pattern = re.compile(r'^splats_views_\d+to\d+\.ply$')
 
-    # Infer SH degree if not provided
-    if args.sh_degree is None:
-        # Try to infer from first PLY file
-        # This is a placeholder: replace with actual logic
-        args.sh_degree = 0
+    # Original code with added regex filtering
+    ply_files = sorted([f for f in os.listdir(args.incremental_dir) if pattern.match(f)])
+
+    if not ply_files:
+        print('No matching PLY files found in', args.incremental_dir)
+    else:
+        # Process the filtered list of files
+        for file in ply_files:
+            print(f"Found matching file: {file}")
+
+        # Infer SH degree if not provided
+        if args.sh_degree is None:
+            # Try to infer from first PLY file
+            # This is a placeholder: replace with actual logic
+            args.sh_degree = 0
 
     renderer = GaussianSplatRenderer(sh_degree=args.sh_degree).to(args.device)
 
@@ -60,14 +68,28 @@ def main():
         ply_path = os.path.join(args.incremental_dir, ply_file)
         splats = load_gs_ply(ply_path, args.sh_degree, args.device)
 
-        # Load camera poses/intrinsics for this step
-        npz_path = ply_path.replace('.ply', '_cams.npz')
-        if not os.path.exists(npz_path):
-            print(f'Camera file {npz_path} not found, skipping {ply_file}')
+        # Extract end_view index from filename
+        match = pattern.match(ply_file)
+        end_view = match.group(1)
+
+        # Construct camera file paths
+        cam_poses_path = os.path.join(
+            args.incremental_dir,
+            f"camera_poses_views_0to{end_view}.npz"
+        )
+
+        cam_intrs_path = os.path.join(
+            args.incremental_dir,
+            f"camera_intrs_views_0to{end_view}.npz"
+        )
+
+        if not os.path.exists(cam_poses_path) or not os.path.exists(cam_intrs_path):
+            print(f"Camera files missing for {ply_file}, skipping.")
             continue
-        cam_data = np.load(npz_path)
-        cam_poses = cam_data['poses']
-        cam_intrs = cam_data['intrs']
+
+        # Load data
+        cam_poses = np.load(cam_poses_path)["camera_poses"]
+        cam_intrs = np.load(cam_intrs_path)["camera_intrs"]
 
         # Render
         rgb_images, depth_images = renderer.rasterize_batches(splats, cam_poses, cam_intrs, args.height, args.width)
