@@ -54,10 +54,10 @@ def main():
         # This is a placeholder: replace with actual logic
         args.sh_degree = 0
 
-    renderer = GaussianSplatRenderer(sh_degree=args.sh_degree, device=args.device)
+    renderer = GaussianSplatRenderer(sh_degree=args.sh_degree).to(args.device)
 
     for ply_file in tqdm(ply_files, desc='Rendering incremental splats'):
-        ply_path = os.path.join(args.incremental_splats_dir, ply_file)
+        ply_path = os.path.join(args.incremental_dir, ply_file)
         splats = load_gs_ply(ply_path, args.sh_degree, args.device)
 
         # Load camera poses/intrinsics for this step
