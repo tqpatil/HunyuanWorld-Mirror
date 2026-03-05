@@ -90,16 +90,52 @@ def main():
         # Load data
         cam_poses = np.load(cam_poses_path)["camera_poses"]
         cam_intrs = np.load(cam_intrs_path)["camera_intrs"]
-
+        splats["means"] = torch.from_numpy(splats["means"]).to(args.device)
+        splats["quats"] = torch.from_numpy(splats["quats"]).to(args.device)
+        splats["scales"] = torch.from_numpy(splats["scales"]).to(args.device)
+        splats["opacities"] = torch.from_numpy(splats["opacities"]).to(args.device)
+        splats["sh"] = torch.from_numpy(splats["sh"]).to(args.device)
+        cam_poses = torch.from_numpy(cam_poses).to(args.device)
+        cam_intrs = torch.from_numpy(cam_intrs).to(args.device)
+        means = splats["means"].unsqueeze(0) if splats["means"].ndim == 2 else splats["means"]  # [1, N, 3/4]
+        quats = splats["quats"].unsqueeze(0) if splats["quats"].ndim == 2 else splats["quats"]  # [1, N, 4]
+        scales = splats["scales"].unsqueeze(0) if splats["scales"].ndim == 2 else splats["scales"]  # [1, N, 3]
+        opacities = splats["opacities"].unsqueeze(0) if splats["opacities"].ndim == 1 else splats["opacities"]  # [1, N]
+        sh = splats["sh"].unsqueeze(0) if splats["sh"].ndim == 3 else splats["sh"]  # [1, N, num_sh_coeffs, 3]
         # Render
-        rgb_images, depth_images = renderer.rasterizer.rasterize_batches(splats, cam_poses, cam_intrs, args.height, args.width)
+        if "colors" in splats:
+            colors = torch.from_numpy(splats["colors"]).to(args.device)
+            print("DEBUG: colors shape", colors.shape)
+        if "sh" in splats:
+            print("DEBUG: sh shape", sh.shape)
+        cams_c2w = cam_poses.to(torch.float32)
+        cams_K = cam_intrs.to(torch.float32)
 
-        # Save images
-        for i, (rgb, depth) in enumerate(zip(rgb_images, depth_images)):
-            rgb_path = os.path.join(args.output_dir, f'{ply_file}_view{i}_rgb.png')
-            depth_path = os.path.join(args.output_dir, f'{ply_file}_view{i}_depth.png')
-            Image.fromarray(rgb).save(rgb_path)
-            Image.fromarray((depth * 255).astype(np.uint8)).save(depth_path)
+        colors_arg = sh if "sh" in splats else torch.from_numpy(splats.get("colors")).to(args.device) if "colors" in splats else None
+
+        rgb_images, depth_images = renderer.rasterizer.rasterize_batches(
+                    means, quats, scales, opacities,
+                    colors_arg,
+                    cams_c2w, cams_K,
+                    width=args.width, height=args.height,
+                    sh_degree=renderer.sh_degree if "sh" in splats else None,
+        )
+
+        V_out = rgb_images.shape[1]
+        for v in range(V_out):
+            try:
+                rgb = rgb_images[0, v].clamp(0, 1)
+                rgb_img = (rgb * 255).to(torch.uint8).cpu().numpy()
+                Image.fromarray(rgb_img).save(str(args.output_dir / f"render_view_{v:02d}_rgb.png"))
+
+                depth = depth_images[0, v, :, :, 0].clamp(0, None)
+                depth_normalized = (depth - depth.min()) / (depth.max() - depth.min() + 1e-8)
+                depth_img = (depth_normalized * 255).to(torch.uint8).cpu().numpy()
+                Image.fromarray(depth_img).save(str(args.output_dir / f"render_view_{v:02d}_depth.png"))
+
+                print(f"   Rendered view {v}")
+            except Exception as e:
+                print(f"  Failed to save render for view {v}: {e}")
 
 if __name__ == '__main__':
     main()
