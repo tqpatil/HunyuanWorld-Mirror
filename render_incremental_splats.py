@@ -34,7 +34,7 @@ def load_gs_ply(ply_path, sh_degree, device):
 
 def main():
     parser = argparse.ArgumentParser(description='Render incremental splats from PLY files.')
-    parser.add_argument('--incremental_dir', type=str,required=True, help='Path to incremental_splats folder')
+    parser.add_argument('--incremental_dir', type=str, required=True, help='Path to incremental_splats folder')
     parser.add_argument('--output_dir', type=str, required=True, help='Directory to save renders')
     parser.add_argument('--height', type=int, required=True, help='Render image height')
     parser.add_argument('--width', type=int, required=True, help='Render image width')
@@ -51,16 +51,14 @@ def main():
 
     if not ply_files:
         print('No matching PLY files found in', args.incremental_dir)
-    else:
-        # Process the filtered list of files
-        for file in ply_files:
-            print(f"Found matching file: {file}")
+        return  # Exit early if no files
 
-        # Infer SH degree if not provided
-        if args.sh_degree is None:
-            # Try to infer from first PLY file
-            # This is a placeholder: replace with actual logic
-            args.sh_degree = 0
+    # Infer SH degree if not provided
+    if args.sh_degree is None:
+        # Try to infer from first PLY file
+        first_ply_path = os.path.join(args.incremental_dir, ply_files[0])
+        # Placeholder: replace with actual inference logic from load_gs_ply or similar
+        args.sh_degree = 0  # Assuming default; adjust based on actual inference
 
     renderer = GaussianSplatRenderer(sh_degree=args.sh_degree).to(args.device)
 
@@ -70,7 +68,7 @@ def main():
 
         # Extract end_view index from filename
         match = pattern.match(ply_file)
-        end_view = match.group(1)
+        end_view = int(match.group(1))
 
         # Construct camera file paths
         cam_poses_path = os.path.join(
@@ -85,6 +83,9 @@ def main():
 
         if not os.path.exists(cam_poses_path) or not os.path.exists(cam_intrs_path):
             print(f"Camera files missing for {ply_file}, skipping.")
+            del splats  # Deallocate splats memory
+            if args.device == 'cuda':
+                torch.cuda.empty_cache()
             continue
 
         # Load data
@@ -92,47 +93,57 @@ def main():
         cam_intrs = np.load(cam_intrs_path)["camera_intrs"]
         cam_poses = torch.from_numpy(cam_poses).to(args.device)
         cam_intrs = torch.from_numpy(cam_intrs).to(args.device)
+
+        # Prepare splat data (ensure batch dimension)
         means = splats["means"].unsqueeze(0) if splats["means"].ndim == 2 else splats["means"]  # [1, N, 3/4]
         quats = splats["quats"].unsqueeze(0) if splats["quats"].ndim == 2 else splats["quats"]  # [1, N, 4]
         scales = splats["scales"].unsqueeze(0) if splats["scales"].ndim == 2 else splats["scales"]  # [1, N, 3]
-        opacities = splats["opacities"].squeeze(-1).unsqueeze(0) # [1, N]
-        # if splats["opacities"].ndim == 1 else splats["opacities"]  
+        opacities = splats["opacities"].squeeze(-1).unsqueeze(0)  # [1, N]
         sh = splats["sh"].unsqueeze(0) if splats["sh"].ndim == 3 else splats["sh"]  # [1, N, num_sh_coeffs, 3]
-        # Render
-        if "colors" in splats:
-            colors = splats["colors"]
-            print("DEBUG: colors shape", colors.shape)
-        if "sh" in splats:
-            print("DEBUG: sh shape", sh.shape)
-        print("DEBUG: opacities shape", opacities.shape)
-        cams_c2w = cam_poses.to(torch.float32)
-        cams_K = cam_intrs.to(torch.float32)
 
-        colors_arg = sh if "sh" in splats else splats["colors"] if "colors" in splats else None
+        colors_arg = sh if "sh" in splats else splats.get("colors") if "colors" in splats else None
 
-        rgb_images, depth_images, _ = renderer.rasterizer.rasterize_batches(
-                    means, quats, scales, opacities,
-                    colors_arg,
-                    cams_c2w, cams_K,
-                    width=args.width, height=args.height,
-                    sh_degree=renderer.sh_degree if "sh" in splats else None,
-        )
+        # Get number of views
+        V = cam_poses.shape[0]
 
-        V_out = rgb_images.shape[1]
-        for v in range(V_out):
+        # Render one view at a time to reduce memory usage
+        for v in range(V):
+            cam_c2w_single = cam_poses[v:v+1]  # [1, 4, 4]
+            cam_K_single = cam_intrs[v:v+1]    # [1, 3, 3]
+
+            rgb_images, depth_images, _ = renderer.rasterize_batches(
+                means, quats, scales, opacities,
+                colors_arg,
+                cam_c2w_single, cam_K_single,
+                width=args.width, height=args.height,
+                sh_degree=renderer.sh_degree if "sh" in splats else None,
+            )
+
             try:
-                rgb = rgb_images[0, v].clamp(0, 1)
+                rgb = rgb_images[0, 0].clamp(0, 1)  # [H, W, 3]
                 rgb_img = (rgb * 255).to(torch.uint8).cpu().numpy()
-                Image.fromarray(rgb_img).save(str(args.output_dir / f"render_view_{v:02d}_rgb.png"))
+                Image.fromarray(rgb_img).save(os.path.join(args.output_dir, f"render_view_{v:02d}_rgb.png"))
 
-                depth = depth_images[0, v, :, :, 0].clamp(0, None)
+                depth = depth_images[0, 0, :, :, 0].clamp(0, None)  # [H, W]
                 depth_normalized = (depth - depth.min()) / (depth.max() - depth.min() + 1e-8)
                 depth_img = (depth_normalized * 255).to(torch.uint8).cpu().numpy()
-                Image.fromarray(depth_img).save(str(args.output_dir / f"render_view_{v:02d}_depth.png"))
+                Image.fromarray(depth_img).save(os.path.join(args.output_dir, f"render_view_{v:02d}_depth.png"))
 
                 print(f"   Rendered view {v}")
             except Exception as e:
                 print(f"  Failed to save render for view {v}: {e}")
+
+            # Deallocate per-view tensors to free memory
+            del rgb_images, depth_images
+            if args.device == 'cuda':
+                torch.cuda.empty_cache()
+
+        # Deallocate splats and camera data after processing all views for this ply_file
+        del splats, cam_poses, cam_intrs, means, quats, scales, opacities, sh
+        if colors_arg is not None:
+            del colors_arg
+        if args.device == 'cuda':
+            torch.cuda.empty_cache()
 
 if __name__ == '__main__':
     main()
