@@ -90,11 +90,6 @@ def main():
         # Load data
         cam_poses = np.load(cam_poses_path)["camera_poses"]
         cam_intrs = np.load(cam_intrs_path)["camera_intrs"]
-        splats["means"] = torch.from_numpy(splats["means"]).to(args.device)
-        splats["quats"] = torch.from_numpy(splats["quats"]).to(args.device)
-        splats["scales"] = torch.from_numpy(splats["scales"]).to(args.device)
-        splats["opacities"] = torch.from_numpy(splats["opacities"]).to(args.device)
-        splats["sh"] = torch.from_numpy(splats["sh"]).to(args.device)
         cam_poses = torch.from_numpy(cam_poses).to(args.device)
         cam_intrs = torch.from_numpy(cam_intrs).to(args.device)
         means = splats["means"].unsqueeze(0) if splats["means"].ndim == 2 else splats["means"]  # [1, N, 3/4]
@@ -104,14 +99,14 @@ def main():
         sh = splats["sh"].unsqueeze(0) if splats["sh"].ndim == 3 else splats["sh"]  # [1, N, num_sh_coeffs, 3]
         # Render
         if "colors" in splats:
-            colors = torch.from_numpy(splats["colors"]).to(args.device)
+            colors = splats["colors"]
             print("DEBUG: colors shape", colors.shape)
         if "sh" in splats:
             print("DEBUG: sh shape", sh.shape)
         cams_c2w = cam_poses.to(torch.float32)
         cams_K = cam_intrs.to(torch.float32)
 
-        colors_arg = sh if "sh" in splats else torch.from_numpy(splats.get("colors")).to(args.device) if "colors" in splats else None
+        colors_arg = sh if "sh" in splats else splats["colors"] if "colors" in splats else None
 
         rgb_images, depth_images = renderer.rasterizer.rasterize_batches(
                     means, quats, scales, opacities,
