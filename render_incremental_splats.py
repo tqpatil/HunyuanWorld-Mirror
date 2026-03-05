@@ -106,6 +106,14 @@ def main():
         # Get number of views
         V = cam_poses.shape[1]
         print("[DEBUG]: Cam poses shape:", cam_poses.shape)
+        print("[DEBUG]: means shape:", means.shape)
+        print("[DEBUG]: quats shape:", quats.shape)
+        print("[DEBUG]: scales shape:", scales.shape)
+        print("[DEBUG]: opacities shape:", opacities.shape)
+        if colors_arg is not None:
+            print("[DEBUG]: colors_arg shape:", colors_arg.shape)
+        print("[DEBUG]: cam_intrs shape:", cam_intrs.shape)
+        print("[DEBUG]: SH shape:", sh.shape)
         # Render one view at a time to reduce memory usage
         for v in range(V):
             cam_c2w_single = cam_poses[:, v:v+1]  # [1, 4, 4]
