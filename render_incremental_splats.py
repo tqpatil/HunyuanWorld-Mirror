@@ -105,7 +105,7 @@ def main():
 
         # Get number of views
         V = cam_poses.shape[0]
-        print("Cam poses shape:", cam_poses.shape)
+        print("[DEBUG]: Cam poses shape:", cam_poses.shape)
         # Render one view at a time to reduce memory usage
         for v in range(V):
             cam_c2w_single = cam_poses[v:v+1]  # [1, 4, 4]
