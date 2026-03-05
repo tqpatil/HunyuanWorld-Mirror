@@ -110,7 +110,7 @@ def main():
 
         colors_arg = sh if "sh" in splats else splats["colors"] if "colors" in splats else None
 
-        rgb_images, depth_images = renderer.rasterizer.rasterize_batches(
+        rgb_images, depth_images, _ = renderer.rasterizer.rasterize_batches(
                     means, quats, scales, opacities,
                     colors_arg,
                     cams_c2w, cams_K,
