@@ -103,6 +103,7 @@ def main():
             print("DEBUG: colors shape", colors.shape)
         if "sh" in splats:
             print("DEBUG: sh shape", sh.shape)
+        print("DEBUG: opacities shape", opacities.shape)
         cams_c2w = cam_poses.to(torch.float32)
         cams_K = cam_intrs.to(torch.float32)
 
