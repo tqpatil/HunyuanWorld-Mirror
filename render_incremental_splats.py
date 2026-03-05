@@ -43,9 +43,9 @@ def main():
 
     os.makedirs(args.output_dir, exist_ok=True)
 
-    ply_files = sorted([f for f in os.listdir(args.incremental_splats_dir) if f.endswith('.ply')])
+    ply_files = sorted([f for f in os.listdir(args.incremental_dir) if f.endswith('.ply')])
     if not ply_files:
-        print('No PLY files found in', args.incremental_splats_dir)
+        print('No PLY files found in', args.incremental_dir)
         return
 
     # Infer SH degree if not provided
