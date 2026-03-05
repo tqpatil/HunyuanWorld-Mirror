@@ -92,7 +92,7 @@ def main():
         cam_intrs = np.load(cam_intrs_path)["camera_intrs"]
 
         # Render
-        rgb_images, depth_images = renderer.rasterize_batches(splats, cam_poses, cam_intrs, args.height, args.width)
+        rgb_images, depth_images = renderer.rasterizer.rasterize_batches(splats, cam_poses, cam_intrs, args.height, args.width)
 
         # Save images
         for i, (rgb, depth) in enumerate(zip(rgb_images, depth_images)):
