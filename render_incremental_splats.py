@@ -39,7 +39,7 @@ def main():
     parser.add_argument('--height', type=int, required=True, help='Render image height')
     parser.add_argument('--width', type=int, required=True, help='Render image width')
     parser.add_argument('--device', type=str, default='cuda', help='Device to use (cuda/cpu)')
-    parser.add_argument('--sh_degree', type=int, default=None, help='Spherical harmonics degree (default: inferred from data)')
+    parser.add_argument('--sh_degree', type=int, default=0, help='Spherical harmonics degree (default: inferred from data)')
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
