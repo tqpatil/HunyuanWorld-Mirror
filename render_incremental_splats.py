@@ -111,7 +111,7 @@ def main():
             cam_c2w_single = cam_poses[v:v+1]  # [1, 4, 4]
             cam_K_single = cam_intrs[v:v+1]    # [1, 3, 3]
 
-            rgb_images, depth_images, _ = renderer.rasterize_batches(
+            rgb_images, depth_images, _ = renderer.rasterizer.rasterize_batches(
                 means, quats, scales, opacities,
                 colors_arg,
                 cam_c2w_single, cam_K_single,
