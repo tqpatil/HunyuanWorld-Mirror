@@ -4,7 +4,7 @@ import numpy as np
 import torch
 from tqdm import tqdm
 from PIL import Image
-from src.models.models.rasterization import GaussianSplatRenderer
+from models.models.rasterization import GaussianSplatRenderer
 
 def load_gs_ply(ply_path, sh_degree, device):
     from plyfile import PlyData
