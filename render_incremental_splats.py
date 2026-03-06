@@ -129,6 +129,9 @@ def main():
         print(f"  opacities: min {splats['opacities'].min().item():.4f}, max {splats['opacities'].max().item():.4f}, mean {splats['opacities'].mean().item():.4f}, sum {splats['opacities'].sum().item():.4f}")
         if 'sh' in splats:
             print(f"  sh: min {splats['sh'].min().item():.4f}, max {splats['sh'].max().item():.4f}, mean {splats['sh'].mean().item():.4f}, abs sum {splats['sh'].abs().sum().item():.4f}")
+            # Print first 3 splats, first 5 SH bands
+            print("  sh sample (first 3 splats, first 5 bands):")
+            print(splats['sh'][:3, :5, :])
         if 'colors' in splats:
             print(f"  colors: min {splats['colors'].min().item():.4f}, max {splats['colors'].max().item():.4f}, mean {splats['colors'].mean().item():.4f}, abs sum {splats['colors'].abs().sum().item():.4f}")
         print(f"  cam_poses: min {cam_poses.min().item():.4f}, max {cam_poses.max().item():.4f}, mean {cam_poses.mean().item():.4f}")
