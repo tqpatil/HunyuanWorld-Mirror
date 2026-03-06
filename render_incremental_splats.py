@@ -117,35 +117,32 @@ def main():
         print("[DEBUG]: Color args shape:", colors_arg.shape if colors_arg is not None else "None")
         colors_arg = colors_arg.squeeze(2)
         # Render one view at a time to reduce memory usage
-        for v in range(V):
-            cam_c2w_single = cam_poses[:, v:v+1]  # [1, 4, 4]
-            cam_K_single = cam_intrs[:, v:v+1]    # [1, 3, 3]
-
-            rgb_images, depth_images, _ = renderer.rasterizer.rasterize_batches(
+        rgb_images, depth_images, _ = renderer.rasterizer.rasterize_batches(
                 means, quats, scales, opacities,
                 colors_arg,
-                cam_c2w_single, cam_K_single,
+                cam_poses, cam_intrs,
                 width=args.width, height=args.height,
-            )
-            V_out = rgb_images.shape[1]
-            for vc in range(V_out):
-                try:
-                    rgb = rgb_images[0, vc].clamp(0, 1)  # [H, W, 3]
-                    rgb_img = (rgb * 255).to(torch.uint8).cpu().numpy()
-                    Image.fromarray(rgb_img).save(os.path.join(args.output_dir, f"render_view_{v:02d}_rgb.png"))
+        )
+        V_out = rgb_images.shape[1]
+        for vc in range(V_out):
+            try:
+                rgb = rgb_images[0, vc].clamp(0, 1)  # [H, W, 3]
+                rgb_img = (rgb * 255).to(torch.uint8).cpu().numpy()
+                Image.fromarray(rgb_img).save(os.path.join(args.output_dir, f"render_view_{vc:02d}_rgb.png"))
 
-                    depth = depth_images[0, vc, :, :, 0].clamp(0, None)  # [H, W]
-                    depth_normalized = (depth - depth.min()) / (depth.max() - depth.min() + 1e-8)
-                    depth_img = (depth_normalized * 255).to(torch.uint8).cpu().numpy()
-                    Image.fromarray(depth_img).save(os.path.join(args.output_dir, f"render_view_{v:02d}_depth.png")) 
-                except Exception as e:
-                    print(f"  Failed to save render for view {v}: {e}")
-            print(f"   Rendered view {v}")
-            # Deallocate per-view tensors to free memory
-            del rgb_images, depth_images
-            if args.device == 'cuda':
-                torch.cuda.empty_cache()
-        # Deallocate splats and camera data after processing all views for this ply_file
+                depth = depth_images[0, vc, :, :, 0].clamp(0, None)  # [H, W]
+                depth_normalized = (depth - depth.min()) / (depth.max() - depth.min() + 1e-8)
+                depth_img = (depth_normalized * 255).to(torch.uint8).cpu().numpy()
+                Image.fromarray(depth_img).save(os.path.join(args.output_dir, f"render_view_{vc:02d}_depth.png")) 
+                print(f"   Rendered view {vc}")
+            except Exception as e:
+                print(f"  Failed to save render for view {vc}: {e}")
+            
+        #     # Deallocate per-view tensors to free memory
+        #     del rgb_images, depth_images
+        #     if args.device == 'cuda':
+        #         torch.cuda.empty_cache()
+        # # Deallocate splats and camera data after processing all views for this ply_file
         del splats, cam_poses, cam_intrs, means, quats, scales, opacities, sh
         if colors_arg is not None:
             del colors_arg
