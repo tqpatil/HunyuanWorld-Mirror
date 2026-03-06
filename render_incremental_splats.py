@@ -91,7 +91,7 @@ def main():
                     splats["means"].unsqueeze(0),
                     splats["quats"].unsqueeze(0),
                     splats["scales"].unsqueeze(0),
-                    splats["opacities"].unsqueeze(0),
+                    splats["opacities"].squeeze(-1).unsqueeze(0),
                     splats.get("sh", None).unsqueeze(0) if "sh" in splats else splats.get("colors", None).unsqueeze(0),
                     pose_chunk,
                     intr_chunk,
