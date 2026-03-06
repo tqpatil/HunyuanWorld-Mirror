@@ -123,6 +123,16 @@ def main():
         cam_poses = torch.from_numpy(cam_poses).to(args.device)
         cam_intrs = torch.from_numpy(cam_intrs).to(args.device)
         splats = preprocess_splats(splats, args.device, args.sh_degree)
+        # Debug: Print splat color, opacity, and camera pose stats
+        print(f"[DEBUG] {ply_file} splats stats:")
+        print(f"  means: min {splats['means'].min().item():.4f}, max {splats['means'].max().item():.4f}")
+        print(f"  opacities: min {splats['opacities'].min().item():.4f}, max {splats['opacities'].max().item():.4f}, mean {splats['opacities'].mean().item():.4f}, sum {splats['opacities'].sum().item():.4f}")
+        if 'sh' in splats:
+            print(f"  sh: min {splats['sh'].min().item():.4f}, max {splats['sh'].max().item():.4f}, mean {splats['sh'].mean().item():.4f}, abs sum {splats['sh'].abs().sum().item():.4f}")
+        if 'colors' in splats:
+            print(f"  colors: min {splats['colors'].min().item():.4f}, max {splats['colors'].max().item():.4f}, mean {splats['colors'].mean().item():.4f}, abs sum {splats['colors'].abs().sum().item():.4f}")
+        print(f"  cam_poses: min {cam_poses.min().item():.4f}, max {cam_poses.max().item():.4f}, mean {cam_poses.mean().item():.4f}")
+        print(f"  cam_intrs: min {cam_intrs.min().item():.4f}, max {cam_intrs.max().item():.4f}, mean {cam_intrs.mean().item():.4f}")
         # Validate opacities and colors
         if splats["opacities"].sum() == 0:
             print(f"Warning: all opacities zero in {ply_file}")
