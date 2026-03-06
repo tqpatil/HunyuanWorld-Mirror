@@ -148,6 +148,10 @@ def main():
         # Render in chunks
         rgbs, depths = render_in_chunks(renderer, splats, cam_poses, cam_intrs, args.height, args.width, args.sh_degree, chunk_size=args.chunk_size)
         V_out = rgbs.shape[1]
+        # Create a subfolder for this ply file's renders
+        ply_base = os.path.splitext(ply_file)[0]
+        render_dir = os.path.join(args.output_dir, ply_base)
+        os.makedirs(render_dir, exist_ok=True)
         for vc in range(V_out):
             try:
                 rgb = rgbs[0, vc]
@@ -156,11 +160,11 @@ def main():
                 if rgb.shape[0] == 3 and rgb.ndim == 3:
                     rgb = rgb.permute(1, 2, 0)  # [H, W, 3]
                 rgb_img = (rgb * 255).to(torch.uint8).cpu().numpy()
-                Image.fromarray(rgb_img).save(os.path.join(args.output_dir, f"render_view_{vc:02d}_rgb.png"))
+                Image.fromarray(rgb_img).save(os.path.join(render_dir, f"render_view_{vc:02d}_rgb.png"))
                 depth = depths[0, vc, :, :, 0].clamp(0, None)
                 depth_normalized = (depth - depth.min()) / (depth.max() - depth.min() + 1e-8)
                 depth_img = (depth_normalized * 255).to(torch.uint8).cpu().numpy()
-                Image.fromarray(depth_img).save(os.path.join(args.output_dir, f"render_view_{vc:02d}_depth.png"))
+                Image.fromarray(depth_img).save(os.path.join(render_dir, f"render_view_{vc:02d}_depth.png"))
                 print(f"   Rendered view {vc}")
             except Exception as e:
                 print(f"  Failed to save render for view {vc}: {e}")
