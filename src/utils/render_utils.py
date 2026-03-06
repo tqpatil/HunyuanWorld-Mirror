@@ -524,37 +524,28 @@ def save_incremental_splats_and_render(
         if final_mask_tensor is not None:
             means = filtered_splats_batched["means"][0]  # [N, 3]
             view_mapping = filtered_splats_batched["view_mapping"][0]  # [N]
+            cam_poses_0 = cam_poses[0]
+            cam_intrs_0 = cam_intrs[0]
+            keep_indices = []
             N = means.shape[0]
-            # Vectorized: gather all valid indices at once
-            view_idx = view_mapping.long()
-            valid_view = (view_idx < cam_poses.shape[1]) & (view_idx < cam_intrs.shape[1])
-            # Only process valid views
-            valid_indices = torch.where(valid_view)[0]
-            if valid_indices.numel() > 0:
-                # Gather all valid means and view indices
-                means_valid = means[valid_indices]
-                view_idx_valid = view_idx[valid_indices]
-                # Prepare c2w and K for all valid splats
-                c2w_valid = cam_poses[0, view_idx_valid]  # [M, 4, 4]
-                K_valid = cam_intrs[0, view_idx_valid]    # [M, 3, 3]
-                # Project all at once (requires project_3d_to_2d to support batch)
-                x, y, valid_proj = project_3d_to_2d(means_valid, c2w_valid, K_valid, H, W)
-                # x, y, valid_proj: [M]
-                # Only keep those that project validly and are inside mask
-                x_int = x.round().long().clamp(0, W-1)
-                y_int = y.round().long().clamp(0, H-1)
-                mask_ok = torch.zeros_like(valid_proj, dtype=torch.bool)
-                for i in range(valid_proj.shape[0]):
-                    if valid_proj[i]:
-                        mask_ok[i] = final_mask_tensor[view_idx_valid[i], y_int[i], x_int[i]]
-                keep_mask = valid_proj & mask_ok
-                keep_indices = valid_indices[keep_mask]
-            else:
-                keep_indices = torch.tensor([], dtype=torch.long, device=means.device)
-            # Filter all tensors to keep only valid splats
+            for i in range(N):
+                v_idx = view_mapping[i].item()
+                v_idx_int = int(v_idx)
+                if v_idx_int >= cam_poses_0.shape[0] or v_idx_int >= cam_intrs_0.shape[0]:
+                    continue
+                c2w = cam_poses_0[v_idx_int]
+                K = cam_intrs_0[v_idx_int]
+                pt = means[i].unsqueeze(0)
+                x, y, valid = project_3d_to_2d(pt, c2w, K, H, W)
+                if valid[0]:
+                    x0 = int(x[0])
+                    y0 = int(y[0])
+                    if 0 <= y0 < final_mask_tensor.shape[1] and 0 <= x0 < final_mask_tensor.shape[2]:
+                        if final_mask_tensor[v_idx_int, y0, x0]:
+                            keep_indices.append(i)
             for key in ["means", "quats", "scales", "opacities", "sh", "weights", "view_mapping"]:
                 if key in filtered_splats_batched:
-                    tensor = filtered_splats_batched[key][0]  # [N, ...]
+                    tensor = filtered_splats_batched[key][0]
                     filtered_splats_batched[key] = tensor[keep_indices].unsqueeze(0)
             print(f"   Mask-filtered splats: {len(keep_indices)} retained")
         
