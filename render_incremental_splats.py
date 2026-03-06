@@ -58,6 +58,8 @@ def main():
         for k in ["means", "scales", "quats", "opacities"]:
             t = splats[k]
             t = t.to(device)
+            if k == "scales":
+                t = torch.exp(t)
             if torch.isnan(t).any() or torch.isinf(t).any():
                 raise ValueError(f"NaN/Inf in {k}")
             out[k] = t
@@ -150,13 +152,9 @@ def main():
             try:
                 rgb = rgbs[0, vc]
                 print(f"[DEBUG] rgb min: {rgb.min().item():.4f}, max: {rgb.max().item():.4f}, mean: {rgb.mean().item():.4f}")
-                maxval = rgb.max().item()
-                if maxval > 0:
-                    rgb = rgb / maxval
                 rgb = rgb.clamp(0, 1)
                 if rgb.shape[0] == 3 and rgb.ndim == 3:
                     rgb = rgb.permute(1, 2, 0)  # [H, W, 3]
-                print(f"[DEBUG] normalized rgb min: {rgb.min().item():.4f}, max: {rgb.max().item():.4f}, mean: {rgb.mean().item():.4f}")
                 rgb_img = (rgb * 255).to(torch.uint8).cpu().numpy()
                 Image.fromarray(rgb_img).save(os.path.join(args.output_dir, f"render_view_{vc:02d}_rgb.png"))
                 depth = depths[0, vc, :, :, 0].clamp(0, None)
