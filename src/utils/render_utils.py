@@ -522,31 +522,40 @@ def save_incremental_splats_and_render(
         
         # Apply mask filtering if provided
         if final_mask_tensor is not None:
-            # Process per splat
             means = filtered_splats_batched["means"][0]  # [N, 3]
             view_mapping = filtered_splats_batched["view_mapping"][0]  # [N]
-            
-            keep_indices = []
-            for i in range(means.shape[0]):
-                view_idx = int(view_mapping[i].item())
-                if view_idx >= cam_poses.shape[1] or view_idx >= cam_intrs.shape[1]:
-                    continue  # Invalid view
-                
-                c2w = cam_poses[0, view_idx]  # [4, 4]
-                K = cam_intrs[0, view_idx]    # [3, 3]
-                
-                point_3d = means[i].unsqueeze(0)  # [1, 3]
-                x, y, valid = project_3d_to_2d(point_3d, c2w, K, H, W)
-                
-                if valid[0] and final_mask_tensor[view_idx, int(y[0]), int(x[0])]:
-                    keep_indices.append(i)
-            
+            N = means.shape[0]
+            # Vectorized: gather all valid indices at once
+            view_idx = view_mapping.long()
+            valid_view = (view_idx < cam_poses.shape[1]) & (view_idx < cam_intrs.shape[1])
+            # Only process valid views
+            valid_indices = torch.where(valid_view)[0]
+            if valid_indices.numel() > 0:
+                # Gather all valid means and view indices
+                means_valid = means[valid_indices]
+                view_idx_valid = view_idx[valid_indices]
+                # Prepare c2w and K for all valid splats
+                c2w_valid = cam_poses[0, view_idx_valid]  # [M, 4, 4]
+                K_valid = cam_intrs[0, view_idx_valid]    # [M, 3, 3]
+                # Project all at once (requires project_3d_to_2d to support batch)
+                x, y, valid_proj = project_3d_to_2d(means_valid, c2w_valid, K_valid, H, W)
+                # x, y, valid_proj: [M]
+                # Only keep those that project validly and are inside mask
+                x_int = x.round().long().clamp(0, W-1)
+                y_int = y.round().long().clamp(0, H-1)
+                mask_ok = torch.zeros_like(valid_proj, dtype=torch.bool)
+                for i in range(valid_proj.shape[0]):
+                    if valid_proj[i]:
+                        mask_ok[i] = final_mask_tensor[view_idx_valid[i], y_int[i], x_int[i]]
+                keep_mask = valid_proj & mask_ok
+                keep_indices = valid_indices[keep_mask]
+            else:
+                keep_indices = torch.tensor([], dtype=torch.long, device=means.device)
             # Filter all tensors to keep only valid splats
             for key in ["means", "quats", "scales", "opacities", "sh", "weights", "view_mapping"]:
                 if key in filtered_splats_batched:
                     tensor = filtered_splats_batched[key][0]  # [N, ...]
                     filtered_splats_batched[key] = tensor[keep_indices].unsqueeze(0)
-            
             print(f"   Mask-filtered splats: {len(keep_indices)} retained")
         
         # Prune the filtered subset (this is the KEY change: prune each iteration 0..k before delta)
@@ -752,4 +761,4 @@ def save_incremental_splats_and_render(
 
         # Store pruned results for next iteration delta computation
         prev_pruned_for_save = pruned_for_save.copy()
-        prev_pruned_view_multi = pruned_view_multi.clone() if pruned_view_multi is not None else None
+        # prev_pruned_view_multi = pruned_view_multi.clone() if pruned_view_multi is not None else None
