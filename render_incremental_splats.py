@@ -138,11 +138,11 @@ def main():
             except Exception as e:
                 print(f"  Failed to save render for view {vc}: {e}")
             
-        #     # Deallocate per-view tensors to free memory
-        #     del rgb_images, depth_images
-        #     if args.device == 'cuda':
-        #         torch.cuda.empty_cache()
-        # # Deallocate splats and camera data after processing all views for this ply_file
+                # Deallocate per-view tensors to free memory
+            del rgb_images, depth_images
+            if args.device == 'cuda':
+                torch.cuda.empty_cache()
+            # Deallocate splats and camera data after processing all views for this ply_file
         del splats, cam_poses, cam_intrs, means, quats, scales, opacities, sh
         if colors_arg is not None:
             del colors_arg
