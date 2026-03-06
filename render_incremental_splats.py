@@ -40,112 +40,115 @@ def main():
     parser.add_argument('--width', type=int, required=True, help='Render image width')
     parser.add_argument('--device', type=str, default='cuda', help='Device to use (cuda/cpu)')
     parser.add_argument('--sh_degree', type=int, default=0, help='Spherical harmonics degree (default: inferred from data)')
+    parser.add_argument('--chunk_size', type=int, default=2, help='Number of views to render at once (reduce if OOM)')
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
 
     pattern = re.compile(r".*0to(\d+)\.ply")
-
-    # Original code with added regex filtering
     ply_files = sorted([f for f in os.listdir(args.incremental_dir) if pattern.match(f)])
-
     if not ply_files:
         print('No matching PLY files found in', args.incremental_dir)
-        return  # Exit early if no files
-
-    # Infer SH degree if not provided
-    if args.sh_degree is None:
-        # Try to infer from first PLY file
-        first_ply_path = os.path.join(args.incremental_dir, ply_files[0])
-        # Placeholder: replace with actual inference logic from load_gs_ply or similar
-        args.sh_degree = 0  # Assuming default; adjust based on actual inference
+        return
 
     renderer = GaussianSplatRenderer(sh_degree=args.sh_degree).to(args.device)
+
+    def preprocess_splats(splats, device, sh_degree):
+        out = {}
+        for k in ["means", "scales", "quats", "opacities"]:
+            t = splats[k]
+            t = t.to(device)
+            if torch.isnan(t).any() or torch.isinf(t).any():
+                raise ValueError(f"NaN/Inf in {k}")
+            out[k] = t
+        out["opacities"] = out["opacities"].clamp(0, 1)
+        if "sh" in splats:
+            sh = splats["sh"].to(device)
+            if sh.shape[-2] != (sh_degree + 1) ** 2:
+                raise ValueError(f"SH degree mismatch: got {sh.shape[-2]}, expected {(sh_degree+1)**2}")
+            if torch.isnan(sh).any() or torch.isinf(sh).any():
+                raise ValueError("NaN/Inf in sh")
+            out["sh"] = sh
+        elif "colors" in splats:
+            colors = splats["colors"].to(device)
+            if torch.isnan(colors).any() or torch.isinf(colors).any():
+                raise ValueError("NaN/Inf in colors")
+            out["colors"] = colors
+        else:
+            N = out["means"].shape[0]
+            out["colors"] = torch.ones((N, 3), device=device)
+        return out
+
+    def render_in_chunks(renderer, splats, cam_poses, cam_intrs, H, W, sh_degree, chunk_size=2):
+        device = splats["means"].device
+        N_views = cam_poses.shape[1]
+        rgbs, depths = [], []
+        for i in range(0, N_views, chunk_size):
+            pose_chunk = cam_poses[:, i:i+chunk_size].to(device)
+            intr_chunk = cam_intrs[:, i:i+chunk_size].to(device)
+            with torch.no_grad():
+                colors, depth, _ = renderer.rasterizer.rasterize_batches(
+                    splats["means"].unsqueeze(0),
+                    splats["quats"].unsqueeze(0),
+                    splats["scales"].unsqueeze(0),
+                    splats["opacities"].unsqueeze(0),
+                    splats.get("sh", None).unsqueeze(0) if "sh" in splats else splats.get("colors", None).unsqueeze(0),
+                    pose_chunk,
+                    intr_chunk,
+                    width=W,
+                    height=H,
+                    sh_degree=sh_degree,
+                )
+            rgbs.append(colors.cpu())
+            depths.append(depth.cpu())
+        rgbs = torch.cat(rgbs, dim=1)
+        depths = torch.cat(depths, dim=1)
+        return rgbs, depths
 
     for ply_file in tqdm(ply_files, desc='Rendering incremental splats'):
         ply_path = os.path.join(args.incremental_dir, ply_file)
         splats = load_gs_ply(ply_path, args.sh_degree, args.device)
-
-        # Extract end_view index from filename
         match = pattern.match(ply_file)
         end_view = int(match.group(1))
-
-        # Construct camera file paths
-        cam_poses_path = os.path.join(
-            args.incremental_dir,
-            f"camera_poses_views_0to{end_view}.npz"
-        )
-
-        cam_intrs_path = os.path.join(
-            args.incremental_dir,
-            f"camera_intrs_views_0to{end_view}.npz"
-        )
-
+        cam_poses_path = os.path.join(args.incremental_dir, f"camera_poses_views_0to{end_view}.npz")
+        cam_intrs_path = os.path.join(args.incremental_dir, f"camera_intrs_views_0to{end_view}.npz")
         if not os.path.exists(cam_poses_path) or not os.path.exists(cam_intrs_path):
             print(f"Camera files missing for {ply_file}, skipping.")
-            del splats  # Deallocate splats memory
+            del splats
             if args.device == 'cuda':
                 torch.cuda.empty_cache()
             continue
-
-        # Load data
         cam_poses = np.load(cam_poses_path)["camera_poses"]
         cam_intrs = np.load(cam_intrs_path)["camera_intrs"]
         cam_poses = torch.from_numpy(cam_poses).to(args.device)
         cam_intrs = torch.from_numpy(cam_intrs).to(args.device)
-
-        # Prepare splat data (ensure batch dimension)
-        means = splats["means"].unsqueeze(0) if splats["means"].ndim == 2 else splats["means"]  # [1, N, 3/4]
-        quats = splats["quats"].unsqueeze(0) if splats["quats"].ndim == 2 else splats["quats"]  # [1, N, 4]
-        scales = splats["scales"].unsqueeze(0) if splats["scales"].ndim == 2 else splats["scales"]  # [1, N, 3]
-        opacities = splats["opacities"].squeeze(-1).unsqueeze(0)  # [1, N]
-        sh = splats["sh"].unsqueeze(0) if splats["sh"].ndim == 3 else splats["sh"]  # [1, N, num_sh_coeffs, 3]
-
-        colors_arg = sh if "sh" in splats else splats.get("colors") if "colors" in splats else None
-
-        # Get number of views
-        print("[DEBUG]: Cam poses shape:", cam_poses.shape)
-        print("[DEBUG]: means shape:", means.shape)
-        print("[DEBUG]: quats shape:", quats.shape)
-        print("[DEBUG]: scales shape:", scales.shape)
-        print("[DEBUG]: opacities shape:", opacities.shape)
-        V = cam_poses.shape[1]  # Number of views from camera poses
-        if colors_arg is not None:
-            print("[DEBUG]: colors_arg shape:", colors_arg.shape)
-        print("[DEBUG]: cam_intrs shape:", cam_intrs.shape)
-        print("[DEBUG]: SH shape:", sh.shape)
-        print("[DEBUG]: Color args shape:", colors_arg.shape if colors_arg is not None else "None")
-        colors_arg = colors_arg.squeeze(2)
-        # Render one view at a time to reduce memory usage
-        rgb_images, depth_images, _ = renderer.rasterizer.rasterize_batches(
-                means, quats, scales, opacities,
-                colors_arg,
-                cam_poses, cam_intrs,
-                width=args.width, height=args.height,
-        )
-        V_out = rgb_images.shape[1]
+        splats = preprocess_splats(splats, args.device, args.sh_degree)
+        # Validate opacities and colors
+        if splats["opacities"].sum() == 0:
+            print(f"Warning: all opacities zero in {ply_file}")
+        if "sh" in splats and splats["sh"].abs().sum() == 0:
+            print(f"Warning: all SH coefficients zero in {ply_file}")
+        elif "colors" in splats and splats["colors"].abs().sum() == 0:
+            print(f"Warning: all colors zero in {ply_file}")
+        # Render in chunks
+        rgbs, depths = render_in_chunks(renderer, splats, cam_poses, cam_intrs, args.height, args.width, args.sh_degree, chunk_size=args.chunk_size)
+        V_out = rgbs.shape[1]
         for vc in range(V_out):
             try:
-                rgb = rgb_images[0, vc].clamp(0, 1)  # [H, W, 3]
+                rgb = rgbs[0, vc].clamp(0, 1)
                 rgb_img = (rgb * 255).to(torch.uint8).cpu().numpy()
                 Image.fromarray(rgb_img).save(os.path.join(args.output_dir, f"render_view_{vc:02d}_rgb.png"))
-
-                depth = depth_images[0, vc, :, :, 0].clamp(0, None)  # [H, W]
+                depth = depths[0, vc, :, :, 0].clamp(0, None)
                 depth_normalized = (depth - depth.min()) / (depth.max() - depth.min() + 1e-8)
                 depth_img = (depth_normalized * 255).to(torch.uint8).cpu().numpy()
-                Image.fromarray(depth_img).save(os.path.join(args.output_dir, f"render_view_{vc:02d}_depth.png")) 
+                Image.fromarray(depth_img).save(os.path.join(args.output_dir, f"render_view_{vc:02d}_depth.png"))
                 print(f"   Rendered view {vc}")
             except Exception as e:
                 print(f"  Failed to save render for view {vc}: {e}")
-            
-                # Deallocate per-view tensors to free memory
-        del rgb_images, depth_images
+        del rgbs, depths
         if args.device == 'cuda':
             torch.cuda.empty_cache()
-            # Deallocate splats and camera data after processing all views for this ply_file
-        del splats, cam_poses, cam_intrs, means, quats, scales, opacities, sh
-        if colors_arg is not None:
-            del colors_arg
+        del splats, cam_poses, cam_intrs
         if args.device == 'cuda':
             torch.cuda.empty_cache()
 
