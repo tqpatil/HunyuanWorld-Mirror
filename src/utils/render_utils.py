@@ -721,11 +721,13 @@ def save_incremental_splats_and_render(
                 V_out = render_colors.shape[1]
                 for v in range(V_out):
                     try:
-                        rgb = render_colors[0, v].clamp(0, 1)
+                        rgb = render_colors[0, v]
+                        rgb.clamp_(0, 1)
                         rgb_img = (rgb * 255).to(torch.uint8).cpu().numpy()
                         Image.fromarray(rgb_img).save(str(renders_dir / f"render_view_{v:02d}_rgb.png"))
 
-                        depth = render_depths[0, v, :, :, 0].clamp(0, None)
+                        depth = render_depths[0, v, :, :, 0]
+                        depth.clamp_(0)
                         depth_normalized = (depth - depth.min()) / (depth.max() - depth.min() + 1e-8)
                         depth_img = (depth_normalized * 255).to(torch.uint8).cpu().numpy()
                         Image.fromarray(depth_img).save(str(renders_dir / f"render_view_{v:02d}_depth.png"))
