@@ -88,11 +88,11 @@ def main():
             intr_chunk = cam_intrs[:, i:i+chunk_size].to(device)
             with torch.no_grad():
                 colors, depth, _ = renderer.rasterizer.rasterize_batches(
-                    splats["means"].unsqueeze(0).to(torch.float32),
-                    splats["quats"].unsqueeze(0).to(torch.uint8),
-                    splats["scales"].unsqueeze(0).to(torch.float32),
-                    splats["opacities"].squeeze(-1).unsqueeze(0).to(torch.float32),
-                    splats.get("sh", None).unsqueeze(0).to(torch.float32) if "sh" in splats else splats.get("colors", None).unsqueeze(0).to(torch.float32),
+                    splats["means"].unsqueeze(0),
+                    splats["quats"].unsqueeze(0),
+                    splats["scales"].unsqueeze(0),
+                    splats["opacities"].squeeze(-1).unsqueeze(0),
+                    splats.get("sh", None).unsqueeze(0) if "sh" in splats else splats.get("colors", None).unsqueeze(0),
                     pose_chunk,
                     intr_chunk,
                     width=W,
