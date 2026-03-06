@@ -88,11 +88,11 @@ def main():
             intr_chunk = cam_intrs[:, i:i+chunk_size].to(device)
             with torch.no_grad():
                 colors, depth, _ = renderer.rasterizer.rasterize_batches(
-                    splats["means"].unsqueeze(0),
-                    splats["quats"].unsqueeze(0),
-                    splats["scales"].unsqueeze(0),
-                    splats["opacities"].squeeze(-1).unsqueeze(0),
-                    splats.get("sh", None).unsqueeze(0) if "sh" in splats else splats.get("colors", None).unsqueeze(0),
+                    splats["means"].unsqueeze(0).astype(torch.float32),
+                    splats["quats"].unsqueeze(0).astype(torch.uint8),
+                    splats["scales"].unsqueeze(0).astype(torch.float32),
+                    splats["opacities"].squeeze(-1).unsqueeze(0).astype(torch.float32),
+                    splats.get("sh", None).unsqueeze(0).astype(torch.float32) if "sh" in splats else splats.get("colors", None).unsqueeze(0).astype(torch.float32),
                     pose_chunk,
                     intr_chunk,
                     width=W,
@@ -148,7 +148,11 @@ def main():
         V_out = rgbs.shape[1]
         for vc in range(V_out):
             try:
-                rgb = rgbs[0, vc].clamp(0, 1)
+                rgb = rgbs[0, vc]
+                print(f"[DEBUG] rgb min: {rgb.min().item():.4f}, max: {rgb.max().item():.4f}, mean: {rgb.mean().item():.4f}")
+                rgb = rgb.clamp(0, 1)
+                if rgb.shape[0] == 3 and rgb.ndim == 3:
+                    rgb = rgb.permute(1, 2, 0)  # [H, W, 3]
                 rgb_img = (rgb * 255).to(torch.uint8).cpu().numpy()
                 Image.fromarray(rgb_img).save(os.path.join(args.output_dir, f"render_view_{vc:02d}_rgb.png"))
                 depth = depths[0, vc, :, :, 0].clamp(0, None)

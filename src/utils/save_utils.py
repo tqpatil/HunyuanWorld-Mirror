@@ -147,15 +147,15 @@ def save_gs_ply(path: Path,
         opacities: Opacity values [N]
     """
     # Filter out points with scales greater than the 95th percentile
-    # scale_threshold = torch.quantile(scales.max(dim=-1)[0], 0.95, dim=0)
-    # filter_mask = scales.max(dim=-1)[0] <= scale_threshold
+    scale_threshold = torch.quantile(scales.max(dim=-1)[0], 0.95, dim=0)
+    filter_mask = scales.max(dim=-1)[0] <= scale_threshold
 
-    # # Apply the filter to all tensors
-    # means = means[filter_mask].reshape(-1, 3)
-    # scales = scales[filter_mask].reshape(-1, 3)
-    # rotations = rotations[filter_mask].reshape(-1, 4)
-    # rgbs = rgbs[filter_mask].reshape(-1, 3)
-    # opacities = opacities[filter_mask].reshape(-1)
+    # Apply the filter to all tensors
+    means = means[filter_mask].reshape(-1, 3)
+    scales = scales[filter_mask].reshape(-1, 3)
+    rotations = rotations[filter_mask].reshape(-1, 4)
+    rgbs = rgbs[filter_mask].reshape(-1, 3)
+    opacities = opacities[filter_mask].reshape(-1)
 
     # Construct attribute names
     attributes = ["x", "y", "z", "nx", "ny", "nz"]
