@@ -505,10 +505,10 @@ def save_incremental_splats_and_render(
                 splat_entry = splats[key]
                 if isinstance(splat_entry, list):
                     # List format from prune_gs: take first batch, filter by mask
-                    filtered_splats[key] = splat_entry[0][mask].clone()
+                    filtered_splats[key] = splat_entry[0][mask]
                 elif isinstance(splat_entry, torch.Tensor) and splat_entry.ndim >= 2:
                     # Tensor format: [B, N, ...], take first batch and filter
-                    filtered_splats[key] = splat_entry[0][mask].clone()
+                    filtered_splats[key] = splat_entry[0][mask]
                 else:
                     filtered_splats[key] = splat_entry
         
