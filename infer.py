@@ -462,6 +462,8 @@ def main():
 
     for idx, scene_path in enumerate(scene_folders):
         # Compute relative path from input_root to scene_path
+        if idx > 2:
+            break
         rel_scene_path = scene_path.relative_to(input_root)
         output_dir = output_root / rel_scene_path
         output_dir.mkdir(parents=True, exist_ok=True)
