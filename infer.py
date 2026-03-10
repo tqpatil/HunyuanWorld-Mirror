@@ -320,7 +320,7 @@ def run_inference_on_scene(scene_path, output_root, args, model, device):
             colors,
             opacities,
         )
-        model.gs_renderer.voxel_size = 0.002
+        model.gs_renderer.voxel_size = 0.01
         save_incremental_splats_and_render(
             predictions["splats"],
             predictions,
