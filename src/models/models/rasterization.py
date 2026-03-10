@@ -316,7 +316,7 @@ class GaussianSplatRenderer(nn.Module):
 
         return filtered
 
-    def prune_gs(self, splats, voxel_size=0.01): # modify pruning to assign merged splats to all views involved instead of just one
+    def prune_gs(self, splats, voxel_size=0.02): # modify pruning to assign merged splats to all views involved instead of just one
         """
         Prune Gaussian splats by merging those in the same voxel.
         Reconciles view-to-splat mapping by assigning merged splats to the view
