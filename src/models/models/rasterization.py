@@ -335,7 +335,7 @@ class GaussianSplatRenderer(nn.Module):
         merged_view_contributors_list = []
         device = splats["means"].device
         view_mapping = splats.get("view_mapping", None)
-
+        voxel_dims_list = []
         for i in range(B):
             # Extract splats for current batch
             splats_i = {k: splats[k][i] for k in ["means", "quats", "scales", "opacities", "sh", "weights"]}
@@ -358,7 +358,8 @@ class GaussianSplatRenderer(nn.Module):
             min_indices = voxel_indices.min(dim=0)[0]
             voxel_indices = voxel_indices - min_indices
             max_dims = voxel_indices.max(dim=0)[0] + 1
-            
+            voxel_dims = max_dims  # (H, W, D)
+            voxel_dims_list.append(voxel_dims)
             # Flatten 3D voxel indices to 1D
             flat_indices = (voxel_indices[:, 0] * max_dims[1] * max_dims[2] + 
                            voxel_indices[:, 1] * max_dims[2] + 
@@ -458,7 +459,7 @@ class GaussianSplatRenderer(nn.Module):
         # Also provide per-merged contributors mask: list of tensors [K, V]
         if merged_view_contributors_list:
             output["view_mapping_multi"] = merged_view_contributors_list
-        
+        print(voxel_dims_list)
         return output
 
     def prepare_splats(self, views, predictions, images, gs_params, context_nums, 
