@@ -530,21 +530,23 @@ class GaussianSplatRenderer(nn.Module):
             ],dim=1).float() + 0.5) * voxel_size
 
             # ----- covariance aware scale merge -----
-            cov = torch.diag_embed(scales**2)
+            log_scales = torch.log(torch.clamp(scales, min=1e-6))
 
-            second_moment = torch.zeros((K,3,3),device=device)
+            merged_log_scales = torch.zeros((K,3), device=device)
 
-            for j in range(N):
-                k = inverse_indices[j]
-                mu = coords[j].unsqueeze(1)
-                second_moment[k] += weights[j]*(cov[j] + mu@mu.T)
+            for d in range(3):
+                merged_log_scales[:, d].scatter_add_(
+                    0,
+                    inverse_indices,
+                    log_scales[:, d] * weights
+                )
 
-            second_moment /= weight_sums.view(-1,1,1)
+            merged_log_scales /= weight_sums.unsqueeze(1)
 
-            mu = merged["means"].unsqueeze(2)
-            cov_merged = second_moment - mu@mu.transpose(1,2)
+            merged["scales"] = torch.exp(merged_log_scales)
 
-            merged["scales"] = torch.sqrt(torch.clamp(torch.diagonal(cov_merged,dim1=1,dim2=2),min=1e-8))
+            # optional: keep splats bounded within voxel
+            merged["scales"] = torch.clamp(merged["scales"], max=voxel_size * 0.7)
 
             # ----- SH merge -----
             for c in range(3):
@@ -554,8 +556,14 @@ class GaussianSplatRenderer(nn.Module):
             merged["sh"] /= weight_sums.view(-1,1,1)
 
             # ----- opacity merge -----
-            merged["opacities"].scatter_add_(0,inverse_indices,opacities*weights)
-            merged["opacities"] /= weight_sums
+            alpha = torch.clamp(opacities, 0.0, 0.999)
+
+            alpha_prod = torch.ones(K, device=device)
+
+            for j in range(alpha.shape[0]):
+                alpha_prod[inverse_indices[j]] *= (1 - alpha[j])
+
+            merged["opacities"] = 1 - alpha_prod
 
             # ----- quaternion merge -----
             for d in range(4):
