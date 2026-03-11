@@ -14,6 +14,11 @@ def load_gs_ply(ply_path):
     quats = np.stack([vert['rot_0'], vert['rot_1'], vert['rot_2'], vert['rot_3']], axis=-1).astype(np.float32)
     opacities = vert['opacity'].astype(np.float32)
 
+    # Pixel-aligned attributes (optional)
+    pixel_x = vert['pixel_x'].astype(np.float32) if 'pixel_x' in vert.data.dtype.names else None
+    pixel_y = vert['pixel_y'].astype(np.float32) if 'pixel_y' in vert.data.dtype.names else None
+    view_idx = vert['view_idx'].astype(np.float32) if 'view_idx' in vert.data.dtype.names else None
+
     # 2. Extract Spherical Harmonics (Colors)
     # DC components (usually f_dc_0, 1, 2)
     f_dc = np.zeros((means.shape[0], 3, 1))
@@ -38,4 +43,4 @@ def load_gs_ply(ply_path):
         # Only DC components exist
         shs = f_dc.transpose(0, 2, 1)
 
-    return means, scales, quats, shs, opacities
+    return means, scales, quats, shs, opacities, pixel_x, pixel_y, view_idx

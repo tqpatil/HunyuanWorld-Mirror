@@ -157,7 +157,7 @@ def save_gs_ply(path: Path,
     # rgbs = rgbs[filter_mask].reshape(-1, 3)
     # opacities = opacities[filter_mask].reshape(-1)
 
-    # Construct attribute names
+    # Construct attribute names (add pixel_x, pixel_y, view_idx for pixel alignment)
     attributes = ["x", "y", "z", "nx", "ny", "nz"]
     for i in range(3):
         attributes.append(f"f_dc_{i}")
@@ -166,11 +166,17 @@ def save_gs_ply(path: Path,
         attributes.append(f"scale_{i}")
     for i in range(4):
         attributes.append(f"rot_{i}")
+    attributes.extend(["pixel_x", "pixel_y", "view_idx"])
 
     # Prepare PLY data structure
     dtype_full = [(attribute, "f4") for attribute in attributes]
     elements = np.empty(means.shape[0], dtype=dtype_full)
-    
+
+    # pixel_x, pixel_y, view_idx must be provided as kwargs (or default to zeros)
+    pixel_x = kwargs.get("pixel_x", np.zeros((means.shape[0],), dtype=np.float32))
+    pixel_y = kwargs.get("pixel_y", np.zeros((means.shape[0],), dtype=np.float32))
+    view_idx = kwargs.get("view_idx", np.zeros((means.shape[0],), dtype=np.float32))
+
     # Concatenate all attributes
     attributes_data = (
         means.float().detach().cpu().numpy(),
@@ -179,10 +185,13 @@ def save_gs_ply(path: Path,
         opacities[..., None].detach().cpu().numpy(),
         scales.log().detach().cpu().numpy(),
         rotations.detach().cpu().numpy(),
+        pixel_x.reshape(-1, 1),
+        pixel_y.reshape(-1, 1),
+        view_idx.reshape(-1, 1),
     )
     attributes_data = np.concatenate(attributes_data, axis=1)
     elements[:] = list(map(tuple, attributes_data))
-    
+
     # Write to PLY file
     PlyData([PlyElement.describe(elements, "vertex")]).write(str(path))
 

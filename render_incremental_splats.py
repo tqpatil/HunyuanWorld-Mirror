@@ -6,31 +6,8 @@ import torch
 from tqdm import tqdm
 from PIL import Image
 from src.models.models.rasterization import GaussianSplatRenderer
+from src.utils.load_gs_ply import load_gs_ply
 
-def load_gs_ply(ply_path, sh_degree, device):
-    from plyfile import PlyData
-    plydata = PlyData.read(ply_path)
-    vertex = plydata['vertex']
-    # Attribute order: x, y, z, nx, ny, nz, f_dc_0, f_dc_1, f_dc_2, opacity, scale_0, scale_1, scale_2, rot_0, rot_1, rot_2, rot_3
-    means = torch.tensor(np.stack([vertex['x'], vertex['y'], vertex['z']], axis=-1), device=device, dtype=torch.float32)
-    scales = torch.tensor(np.stack([vertex['scale_0'], vertex['scale_1'], vertex['scale_2']], axis=-1), device=device, dtype=torch.float32)
-    quats = torch.tensor(np.stack([vertex['rot_0'], vertex['rot_1'], vertex['rot_2'], vertex['rot_3']], axis=-1), device=device, dtype=torch.float32)
-    rgbs = torch.tensor(np.stack([vertex['f_dc_0'], vertex['f_dc_1'], vertex['f_dc_2']], axis=-1), device=device, dtype=torch.float32)
-    opacities = torch.tensor(vertex['opacity'], device=device, dtype=torch.float32).unsqueeze(-1)
-    # SH: If sh_degree > 0, you may need to load more SH coefficients
-    if sh_degree == 0:
-        sh = rgbs.unsqueeze(1)  # [N, 1, 3]
-    else:
-        # If higher SH degree, extend this to load all SH bands
-        sh = torch.zeros((means.shape[0], (sh_degree+1)**2, 3), device=device)
-        sh[:, 0, :] = rgbs
-    return {
-        'means': means,
-        'quats': quats,
-        'scales': scales,
-        'opacities': opacities,
-        'sh': sh,
-    }
 
 def main():
     parser = argparse.ArgumentParser(description='Render incremental splats from PLY files.')
@@ -45,8 +22,8 @@ def main():
 
     os.makedirs(args.output_dir, exist_ok=True)
 
-    pattern = re.compile(r".*0to(\d+)\.ply")
-    ply_files = sorted([f for f in os.listdir(args.incremental_dir) if pattern.match(f)])
+    pattern = re.compile(r"splats_view_(\d+)\.ply")
+    ply_files = sorted([f for f in os.listdir(args.incremental_dir) if pattern.match(f)], key=lambda x: int(pattern.match(x).group(1)))
     if not ply_files:
         print('No matching PLY files found in', args.incremental_dir)
         return
@@ -107,16 +84,31 @@ def main():
         depths = torch.cat(depths, dim=1)
         return rgbs, depths
 
+
+    # Incrementally load and concatenate splats for each view
+    all_splats = None
     for ply_file in tqdm(ply_files, desc='Rendering incremental splats'):
         ply_path = os.path.join(args.incremental_dir, ply_file)
-        splats = load_gs_ply(ply_path, args.sh_degree, args.device)
+        # Use updated loader: returns means, scales, quats, shs, opacities, pixel_x, pixel_y, view_idx
+        means, scales, quats, shs, opacities, pixel_x, pixel_y, view_idx = load_gs_ply(ply_path)
+        means = torch.tensor(means, device=args.device, dtype=torch.float32)
+        scales = torch.tensor(scales, device=args.device, dtype=torch.float32)
+        quats = torch.tensor(quats, device=args.device, dtype=torch.float32)
+        opacities = torch.tensor(opacities, device=args.device, dtype=torch.float32).unsqueeze(-1)
+        sh = torch.tensor(shs, device=args.device, dtype=torch.float32)
+        splats = {
+            'means': means,
+            'quats': quats,
+            'scales': scales,
+            'opacities': opacities,
+            'sh': sh,
+        }
         match = pattern.match(ply_file)
-        end_view = int(match.group(1))
-        cam_poses_path = os.path.join(args.incremental_dir, f"camera_poses_views_0to{end_view}.npz")
-        cam_intrs_path = os.path.join(args.incremental_dir, f"camera_intrs_views_0to{end_view}.npz")
+        view_idx = int(match.group(1))
+        cam_poses_path = os.path.join(args.incremental_dir, f"camera_poses_views_0to{view_idx}.npz")
+        cam_intrs_path = os.path.join(args.incremental_dir, f"camera_intrs_views_0to{view_idx}.npz")
         if not os.path.exists(cam_poses_path) or not os.path.exists(cam_intrs_path):
             print(f"Camera files missing for {ply_file}, skipping.")
-            del splats
             if args.device == 'cuda':
                 torch.cuda.empty_cache()
             continue
@@ -125,31 +117,37 @@ def main():
         cam_poses = torch.from_numpy(cam_poses).to(args.device)
         cam_intrs = torch.from_numpy(cam_intrs).to(args.device)
         splats = preprocess_splats(splats, args.device, args.sh_degree)
+
+        # Concatenate splats from previous views
+        if all_splats is None:
+            all_splats = {k: v.clone() for k, v in splats.items()}
+        else:
+            for k in all_splats:
+                all_splats[k] = torch.cat([all_splats[k], splats[k]], dim=0)
+
         # Debug: Print splat color, opacity, and camera pose stats
-        print(f"[DEBUG] {ply_file} splats stats:")
-        print(f"  means: min {splats['means'].min().item():.4f}, max {splats['means'].max().item():.4f}")
-        print(f"  opacities: min {splats['opacities'].min().item():.4f}, max {splats['opacities'].max().item():.4f}, mean {splats['opacities'].mean().item():.4f}, sum {splats['opacities'].sum().item():.4f}")
-        if 'sh' in splats:
-            print(f"  sh: min {splats['sh'].min().item():.4f}, max {splats['sh'].max().item():.4f}, mean {splats['sh'].mean().item():.4f}, abs sum {splats['sh'].abs().sum().item():.4f}")
-            # Print first 3 splats, first 5 SH bands
+        print(f"[DEBUG] splats_view_0_to_{view_idx} stats:")
+        print(f"  means: min {all_splats['means'].min().item():.4f}, max {all_splats['means'].max().item():.4f}")
+        print(f"  opacities: min {all_splats['opacities'].min().item():.4f}, max {all_splats['opacities'].max().item():.4f}, mean {all_splats['opacities'].mean().item():.4f}, sum {all_splats['opacities'].sum().item():.4f}")
+        if 'sh' in all_splats:
+            print(f"  sh: min {all_splats['sh'].min().item():.4f}, max {all_splats['sh'].max().item():.4f}, mean {all_splats['sh'].mean().item():.4f}, abs sum {all_splats['sh'].abs().sum().item():.4f}")
             print("  sh sample (first 3 splats, first 5 bands):")
-            print(splats['sh'][:3, :5, :])
-        if 'colors' in splats:
-            print(f"  colors: min {splats['colors'].min().item():.4f}, max {splats['colors'].max().item():.4f}, mean {splats['colors'].mean().item():.4f}, abs sum {splats['colors'].abs().sum().item():.4f}")
+            print(all_splats['sh'][:3, :5, :])
+        if 'colors' in all_splats:
+            print(f"  colors: min {all_splats['colors'].min().item():.4f}, max {all_splats['colors'].max().item():.4f}, mean {all_splats['colors'].mean().item():.4f}, abs sum {all_splats['colors'].abs().sum().item():.4f}")
         print(f"  cam_poses: min {cam_poses.min().item():.4f}, max {cam_poses.max().item():.4f}, mean {cam_poses.mean().item():.4f}")
         print(f"  cam_intrs: min {cam_intrs.min().item():.4f}, max {cam_intrs.max().item():.4f}, mean {cam_intrs.mean().item():.4f}")
-        # Validate opacities and colors
-        if splats["opacities"].sum() == 0:
-            print(f"Warning: all opacities zero in {ply_file}")
-        if "sh" in splats and splats["sh"].abs().sum() == 0:
-            print(f"Warning: all SH coefficients zero in {ply_file}")
-        elif "colors" in splats and splats["colors"].abs().sum() == 0:
-            print(f"Warning: all colors zero in {ply_file}")
+        if all_splats["opacities"].sum() == 0:
+            print(f"Warning: all opacities zero in splats_view_0_to_{view_idx}")
+        if "sh" in all_splats and all_splats["sh"].abs().sum() == 0:
+            print(f"Warning: all SH coefficients zero in splats_view_0_to_{view_idx}")
+        elif "colors" in all_splats and all_splats["colors"].abs().sum() == 0:
+            print(f"Warning: all colors zero in splats_view_0_to_{view_idx}")
+
         # Render in chunks
-        rgbs, depths = render_in_chunks(renderer, splats, cam_poses, cam_intrs, args.height, args.width, args.sh_degree, chunk_size=args.chunk_size)
+        rgbs, depths = render_in_chunks(renderer, all_splats, cam_poses, cam_intrs, args.height, args.width, args.sh_degree, chunk_size=args.chunk_size)
         V_out = rgbs.shape[1]
-        # Create a subfolder for this ply file's renders
-        ply_base = os.path.splitext(ply_file)[0]
+        ply_base = f"splats_views_0_to_{view_idx}"
         render_dir = os.path.join(args.output_dir, ply_base)
         os.makedirs(render_dir, exist_ok=True)
         for vc in range(V_out):
@@ -171,7 +169,7 @@ def main():
         del rgbs, depths
         if args.device == 'cuda':
             torch.cuda.empty_cache()
-        del splats, cam_poses, cam_intrs
+        del cam_poses, cam_intrs
         if args.device == 'cuda':
             torch.cuda.empty_cache()
 
