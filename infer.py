@@ -159,7 +159,7 @@ def run_inference_on_scene(scene_path, output_root, args, model, device):
         print(f"📹 Processing video: {input_path}")
         input_frames_dir = outdir / "input_frames"
         input_frames_dir.mkdir(exist_ok=True)
-        img_paths = select_frames_by_camera_poses(str(input_path), n=10, output_dir=str(input_frames_dir))
+        img_paths = select_frames_by_camera_poses(str(input_path), n=15, output_dir=str(input_frames_dir))
         if not img_paths:
             raise RuntimeError("❌ Failed to extract frames from video")
         img_paths = sorted(img_paths)
@@ -172,7 +172,7 @@ def run_inference_on_scene(scene_path, output_root, args, model, device):
             print(f"📁 Processing DL3DV dataset: {input_path}")
             input_frames_dir = outdir / "input_frames"
             input_frames_dir.mkdir(exist_ok=True)
-            img_paths = select_frames_from_dl3dv(str(input_path), n=10, output_dir=str(input_frames_dir))
+            img_paths = select_frames_from_dl3dv(str(input_path), n=15, output_dir=str(input_frames_dir))
             if not img_paths:
                 raise RuntimeError("❌ Failed to select frames from DL3DV dataset")
             img_paths = sorted(img_paths)
@@ -462,7 +462,7 @@ def main():
 
     for idx, scene_path in enumerate(scene_folders):
         # Compute relative path from input_root to scene_path
-        if idx > 2:
+        if idx > 100:
             break
         rel_scene_path = scene_path.relative_to(input_root)
         output_dir = output_root / rel_scene_path
