@@ -134,7 +134,8 @@ def save_gs_ply(path: Path,
                 scales: torch.Tensor,
                 rotations: torch.Tensor,
                 rgbs: torch.Tensor,
-                opacities: torch.Tensor) -> None:
+                opacities: torch.Tensor,
+                **kwargs) -> None:
     """
     Export Gaussian splat data to PLY format.
     
