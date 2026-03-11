@@ -316,303 +316,152 @@ class GaussianSplatRenderer(nn.Module):
 
         return filtered
 
-    # def prune_gs(self, splats, voxel_size=0.01): # modify pruning to assign merged splats to all views involved instead of just one
-    #     """
-    #     Prune Gaussian splats by merging those in the same voxel.
-    #     Reconciles view-to-splat mapping by assigning merged splats to the view
-    #     with the highest opacity contribution.
+    def prune_gs(self, splats, voxel_size=0.005): # modify pruning to assign merged splats to all views involved instead of just one
+        """
+        Prune Gaussian splats by merging those in the same voxel.
+        Reconciles view-to-splat mapping by assigning merged splats to the view
+        with the highest opacity contribution.
         
-    #     Args:
-    #         splats: Dictionary containing Gaussian parameters
-    #         voxel_size: Size of voxels for spatial grouping
+        Args:
+            splats: Dictionary containing Gaussian parameters
+            voxel_size: Size of voxels for spatial grouping
             
-    #     Returns:
-    #         Dictionary with pruned splats and updated view_mapping
-    #     """
-    #     B = splats["means"].shape[0]
-    #     merged_splats_list = []
-    #     merged_view_mapping_list = []
-    #     merged_view_contributors_list = []
-    #     device = splats["means"].device
-    #     view_mapping = splats.get("view_mapping", None)
-    #     voxel_dims_list = []
-    #     for i in range(B):
-    #         # Extract splats for current batch
-    #         splats_i = {k: splats[k][i] for k in ["means", "quats", "scales", "opacities", "sh", "weights"]}
-    #         view_mapping_i = view_mapping[i] if view_mapping is not None else None  # [N]
-    #         # Compute voxel indices
-    #         coords = splats_i["means"]
-    #         # Debug: report coordinate bounds for this batch
-    #         try:
-    #             coords_min = coords.min(dim=0)[0]
-    #             coords_max = coords.max(dim=0)[0]
-    #         except Exception:
-    #             coords_min = None
-    #             coords_max = None
-    #         voxel_indices = (coords / voxel_size).floor().long()
-    #         # Debug: print counts to help diagnose pruning effectiveness
-    #         try:
-    #             N = coords.shape[0]
-    #         except Exception:
-    #             N = None
-    #         min_indices = voxel_indices.min(dim=0)[0]
-    #         voxel_indices = voxel_indices - min_indices
-    #         max_dims = voxel_indices.max(dim=0)[0] + 1
-    #         voxel_dims = max_dims  # (H, W, D)
-    #         voxel_dims_list.append(voxel_dims)
-    #         # Flatten 3D voxel indices to 1D
-    #         flat_indices = (voxel_indices[:, 0] * max_dims[1] * max_dims[2] + 
-    #                        voxel_indices[:, 1] * max_dims[2] + 
-    #                        voxel_indices[:, 2])
-            
-    #         # Find unique voxels and inverse mapping
-    #         unique_voxels, inverse_indices = torch.unique(flat_indices, return_inverse=True)
-    #         K = len(unique_voxels)
-    #         # Print debug info
-    #         print(f"prune_gs: batch={i} N_splats={N} unique_voxels={K} voxel_size={voxel_size} bbox_min={coords_min} bbox_max={coords_max}")
-
-    #         # Initialize merged splats
-    #         merged = {
-    #             "means": torch.zeros((K, 3), device=device),
-    #             "quats": torch.zeros((K, 4), device=device),
-    #             "scales": torch.zeros((K, 3), device=device),
-    #             "opacities": torch.zeros(K, device=device),
-    #             "sh": torch.zeros((K, self.nums_sh, 3), device=device)
-    #         }
-            
-    #         # Get weights and compute weight sums per voxel
-    #         weights = splats_i["weights"]
-    #         weight_sums = torch.zeros(K, device=device)
-    #         weight_sums.scatter_add_(0, inverse_indices, weights)
-    #         weight_sums = torch.clamp(weight_sums, min=1e-8)
-
-    #         # Merge means (weighted average)
-    #         for d in range(3):
-    #             merged["means"][:, d].scatter_add_(0, inverse_indices, 
-    #                                              splats_i["means"][:, d] * weights)
-    #         merged["means"] = merged["means"] / weight_sums.unsqueeze(1)
-
-    #         # Merge spherical harmonics (weighted average)
-    #         for d in range(3):
-    #             merged["sh"][:, 0, d].scatter_add_(0, inverse_indices, 
-    #                                               splats_i["sh"][:, 0, d] * weights)
-    #         merged["sh"] = merged["sh"] / weight_sums.unsqueeze(-1).unsqueeze(-1)
-
-    #         # Merge opacities (weighted sum of squares)
-    #         merged["opacities"].scatter_add_(0, inverse_indices, weights * weights)
-    #         merged["opacities"] = merged["opacities"] / weight_sums
-
-    #         # Merge scales (weighted average)
-    #         for d in range(3):
-    #             merged["scales"][:, d].scatter_add_(0, inverse_indices, 
-    #                                               splats_i["scales"][:, d] * weights)
-    #         merged["scales"] = merged["scales"] / weight_sums.unsqueeze(1)
-
-    #         # Merge quaternions (weighted average + normalization)
-    #         for d in range(4):
-    #             merged["quats"][:, d].scatter_add_(0, inverse_indices, 
-    #                                              splats_i["quats"][:, d] * weights)
-    #         quat_norms = torch.norm(merged["quats"], dim=1, keepdim=True)
-    #         merged["quats"] = merged["quats"] / torch.clamp(quat_norms, min=1e-8)
-
-    #         # Reconcile view mapping: assign each merged splat to the view with highest opacity contribution
-    #         if view_mapping_i is not None:
-    #             merged_view_mapping = torch.zeros(K, dtype=torch.long, device=device)
-    #             opacity_per_view = torch.zeros((K, view_mapping_i.max().item() + 1), device=device)
-                
-    #             # Accumulate opacities per view for each merged splat and record contributing views
-    #             batch_contribs = []
-    #             for voxel_idx in range(K):
-    #                 # Find all original splats that merged into this voxel
-    #                 mask = inverse_indices == voxel_idx
-    #                 original_splat_indices = torch.where(mask)[0]
-    #                 original_views = view_mapping_i[original_splat_indices]
-    #                 original_opacities = splats_i["opacities"][original_splat_indices]
-                    
-    #                 # Sum opacities per view
-    #                 opacity_per_view[voxel_idx].scatter_add_(0, original_views, original_opacities)
-                    
-    #                 # Record which views contributed to this merged splat
-    #                 unique_views = torch.unique(original_views)
-    #                 contrib_mask = torch.zeros(opacity_per_view.shape[1], dtype=torch.bool, device=device)
-    #                 contrib_mask[unique_views.long()] = True
-    #                 batch_contribs.append(contrib_mask)
-                
-    #             # Stack per-voxel contributor masks into [K, V] and append once per batch
-    #             if len(batch_contribs) > 0:
-    #                 merged_view_contributors_list.append(torch.stack(batch_contribs, dim=0))
-
-    #             # Assign each merged splat to the view with max opacity contribution (legacy single-view mapping)
-    #             merged_view_mapping = opacity_per_view.argmax(dim=1)
-    #             merged_view_mapping_list.append(merged_view_mapping)
-            
-    #         merged_splats_list.append(merged)
-
-    #     # Reorganize output
-    #     output = {}
-    #     for key in ["means", "sh", "opacities", "scales", "quats"]:
-    #         output[key] = [merged[key] for merged in merged_splats_list]
-        
-    #     # Reorganize view mapping
-    #     if merged_view_mapping_list:
-    #         output["view_mapping"] = merged_view_mapping_list
-    #     # Also provide per-merged contributors mask: list of tensors [K, V]
-    #     if merged_view_contributors_list:
-    #         output["view_mapping_multi"] = merged_view_contributors_list
-    #     print(voxel_dims_list)
-    #     return output
-    def prune_gs(self, splats, voxel_size=0.01):
-
+        Returns:
+            Dictionary with pruned splats and updated view_mapping
+        """
         B = splats["means"].shape[0]
         merged_splats_list = []
         merged_view_mapping_list = []
         merged_view_contributors_list = []
         device = splats["means"].device
         view_mapping = splats.get("view_mapping", None)
-
         voxel_dims_list = []
-
         for i in range(B):
-
-            splats_i = {k: splats[k][i] for k in ["means","quats","scales","opacities","sh","weights"]}
-            view_mapping_i = view_mapping[i] if view_mapping is not None else None
-
+            # Extract splats for current batch
+            splats_i = {k: splats[k][i] for k in ["means", "quats", "scales", "opacities", "sh", "weights"]}
+            view_mapping_i = view_mapping[i] if view_mapping is not None else None  # [N]
+            # Compute voxel indices
             coords = splats_i["means"]
-            scales = splats_i["scales"]
-            opacities = splats_i["opacities"]
-
-            coords_min = coords.min(dim=0)[0]
-            coords_max = coords.max(dim=0)[0]
-
-            voxel_indices = ((coords - coords_min) / voxel_size).floor().long()
+            # Debug: report coordinate bounds for this batch
+            try:
+                coords_min = coords.min(dim=0)[0]
+                coords_max = coords.max(dim=0)[0]
+            except Exception:
+                coords_min = None
+                coords_max = None
+            voxel_indices = (coords / voxel_size).floor().long()
+            # Debug: print counts to help diagnose pruning effectiveness
+            try:
+                N = coords.shape[0]
+            except Exception:
+                N = None
+            min_indices = voxel_indices.min(dim=0)[0]
+            voxel_indices = voxel_indices - min_indices
             max_dims = voxel_indices.max(dim=0)[0] + 1
-            voxel_dims_list.append(max_dims)
-
-            flat_indices = (
-                voxel_indices[:,0] * max_dims[1] * max_dims[2] +
-                voxel_indices[:,1] * max_dims[2] +
-                voxel_indices[:,2]
-            )
-
+            voxel_dims = max_dims  # (H, W, D)
+            voxel_dims_list.append(voxel_dims)
+            # Flatten 3D voxel indices to 1D
+            flat_indices = (voxel_indices[:, 0] * max_dims[1] * max_dims[2] + 
+                           voxel_indices[:, 1] * max_dims[2] + 
+                           voxel_indices[:, 2])
+            
+            # Find unique voxels and inverse mapping
             unique_voxels, inverse_indices = torch.unique(flat_indices, return_inverse=True)
             K = len(unique_voxels)
-            N = coords.shape[0]
+            # Print debug info
+            print(f"prune_gs: batch={i} N_splats={N} unique_voxels={K} voxel_size={voxel_size} bbox_min={coords_min} bbox_max={coords_max}")
 
-            print(f"prune_gs: batch={i} N_splats={N} unique_voxels={K}")
-
+            # Initialize merged splats
             merged = {
-                "means": torch.zeros((K,3),device=device),
-                "quats": torch.zeros((K,4),device=device),
-                "scales": torch.zeros((K,3),device=device),
-                "opacities": torch.zeros(K,device=device),
-                "sh": torch.zeros((K,self.nums_sh,3),device=device)
+                "means": torch.zeros((K, 3), device=device),
+                "quats": torch.zeros((K, 4), device=device),
+                "scales": torch.zeros((K, 3), device=device),
+                "opacities": torch.zeros(K, device=device),
+                "sh": torch.zeros((K, self.nums_sh, 3), device=device)
             }
+            
+            # Get weights and compute weight sums per voxel
+            weights = splats_i["weights"]
+            weight_sums = torch.zeros(K, device=device)
+            weight_sums.scatter_add_(0, inverse_indices, weights)
+            weight_sums = torch.clamp(weight_sums, min=1e-8)
 
-            # ----- improved weights -----
-            volume = scales.prod(dim=1)
-            weights = opacities * volume
-
-            weight_sums = torch.zeros(K,device=device)
-            weight_sums.scatter_add_(0,inverse_indices,weights)
-            weight_sums = torch.clamp(weight_sums,min=1e-8)
-
-            # ----- voxel centers -----
-            voxel_centers = coords_min + (voxel_indices.float() + 0.5) * voxel_size
-            merged["means"].scatter_add_(0,inverse_indices.unsqueeze(1).expand(-1,3),
-                                        voxel_centers * weights.unsqueeze(1))
-            merged["means"] /= weight_sums.unsqueeze(1)
-
-            # snap exactly to voxel centers
-            merged["means"] = coords_min + (torch.stack([
-                unique_voxels // (max_dims[1]*max_dims[2]),
-                (unique_voxels // max_dims[2]) % max_dims[1],
-                unique_voxels % max_dims[2]
-            ],dim=1).float() + 0.5) * voxel_size
-
-            # ----- covariance aware scale merge -----
-            log_scales = torch.log(torch.clamp(scales, min=1e-6))
-
-            merged_log_scales = torch.zeros((K,3), device=device)
-
+            # Merge means (weighted average)
             for d in range(3):
-                merged_log_scales[:, d].scatter_add_(
-                    0,
-                    inverse_indices,
-                    log_scales[:, d] * weights
-                )
+                merged["means"][:, d].scatter_add_(0, inverse_indices, 
+                                                 splats_i["means"][:, d] * weights)
+            merged["means"] = merged["means"] / weight_sums.unsqueeze(1)
 
-            merged_log_scales /= weight_sums.unsqueeze(1)
+            # Merge spherical harmonics (weighted average)
+            for d in range(3):
+                merged["sh"][:, 0, d].scatter_add_(0, inverse_indices, 
+                                                  splats_i["sh"][:, 0, d] * weights)
+            merged["sh"] = merged["sh"] / weight_sums.unsqueeze(-1).unsqueeze(-1)
 
-            merged["scales"] = torch.exp(merged_log_scales)
+            # Merge opacities (weighted sum of squares)
+            merged["opacities"].scatter_add_(0, inverse_indices, weights * weights)
+            merged["opacities"] = merged["opacities"] / weight_sums
 
-            # optional: keep splats bounded within voxel
-            merged["scales"] = torch.clamp(merged["scales"], max=voxel_size * 0.7)
+            # Merge scales (weighted average)
+            for d in range(3):
+                merged["scales"][:, d].scatter_add_(0, inverse_indices, 
+                                                  splats_i["scales"][:, d] * weights)
+            merged["scales"] = merged["scales"] / weight_sums.unsqueeze(1)
 
-            # ----- SH merge -----
-            for c in range(3):
-                merged["sh"][:,0,c].scatter_add_(0,inverse_indices,
-                    splats_i["sh"][:,0,c]*weights)
-
-            merged["sh"] /= weight_sums.view(-1,1,1)
-
-            # ----- opacity merge -----
-            alpha = torch.clamp(opacities, 0.0, 0.999)
-
-            alpha_prod = torch.ones(K, device=device)
-
-            for j in range(alpha.shape[0]):
-                alpha_prod[inverse_indices[j]] *= (1 - alpha[j])
-
-            merged["opacities"] = 1 - alpha_prod
-
-            # ----- quaternion merge -----
+            # Merge quaternions (weighted average + normalization)
             for d in range(4):
-                merged["quats"][:,d].scatter_add_(0,inverse_indices,
-                    splats_i["quats"][:,d]*weights)
+                merged["quats"][:, d].scatter_add_(0, inverse_indices, 
+                                                 splats_i["quats"][:, d] * weights)
+            quat_norms = torch.norm(merged["quats"], dim=1, keepdim=True)
+            merged["quats"] = merged["quats"] / torch.clamp(quat_norms, min=1e-8)
 
-            merged["quats"] /= torch.norm(merged["quats"],dim=1,keepdim=True).clamp(min=1e-8)
-
-            # ----- view mapping (unchanged) -----
+            # Reconcile view mapping: assign each merged splat to the view with highest opacity contribution
             if view_mapping_i is not None:
-
-                opacity_per_view = torch.zeros((K,view_mapping_i.max().item()+1),device=device)
+                merged_view_mapping = torch.zeros(K, dtype=torch.long, device=device)
+                opacity_per_view = torch.zeros((K, view_mapping_i.max().item() + 1), device=device)
+                
+                # Accumulate opacities per view for each merged splat and record contributing views
                 batch_contribs = []
-
                 for voxel_idx in range(K):
-
+                    # Find all original splats that merged into this voxel
                     mask = inverse_indices == voxel_idx
-                    idx = torch.where(mask)[0]
-
-                    views = view_mapping_i[idx]
-                    ops = opacities[idx]
-
-                    opacity_per_view[voxel_idx].scatter_add_(0,views,ops)
-
-                    unique_views = torch.unique(views)
-                    contrib_mask = torch.zeros(opacity_per_view.shape[1],dtype=torch.bool,device=device)
+                    original_splat_indices = torch.where(mask)[0]
+                    original_views = view_mapping_i[original_splat_indices]
+                    original_opacities = splats_i["opacities"][original_splat_indices]
+                    
+                    # Sum opacities per view
+                    opacity_per_view[voxel_idx].scatter_add_(0, original_views, original_opacities)
+                    
+                    # Record which views contributed to this merged splat
+                    unique_views = torch.unique(original_views)
+                    contrib_mask = torch.zeros(opacity_per_view.shape[1], dtype=torch.bool, device=device)
                     contrib_mask[unique_views.long()] = True
                     batch_contribs.append(contrib_mask)
+                
+                # Stack per-voxel contributor masks into [K, V] and append once per batch
+                if len(batch_contribs) > 0:
+                    merged_view_contributors_list.append(torch.stack(batch_contribs, dim=0))
 
-                merged_view_mapping_list.append(opacity_per_view.argmax(dim=1))
-
-                merged_view_contributors_list.append(torch.stack(batch_contribs,dim=0))
-
+                # Assign each merged splat to the view with max opacity contribution (legacy single-view mapping)
+                merged_view_mapping = opacity_per_view.argmax(dim=1)
+                merged_view_mapping_list.append(merged_view_mapping)
+            
             merged_splats_list.append(merged)
 
+        # Reorganize output
         output = {}
-
-        for key in ["means","sh","opacities","scales","quats"]:
+        for key in ["means", "sh", "opacities", "scales", "quats"]:
             output[key] = [merged[key] for merged in merged_splats_list]
-
+        
+        # Reorganize view mapping
         if merged_view_mapping_list:
             output["view_mapping"] = merged_view_mapping_list
-
+        # Also provide per-merged contributors mask: list of tensors [K, V]
         if merged_view_contributors_list:
             output["view_mapping_multi"] = merged_view_contributors_list
-
         print(voxel_dims_list)
-
         return output
+    
     def prepare_splats(self, views, predictions, images, gs_params, context_nums, 
                        context_predictions={}, position_from="gsdepth+gtcamera"):
         """
