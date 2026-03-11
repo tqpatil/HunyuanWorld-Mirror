@@ -368,6 +368,15 @@ class GaussianSplatRenderer(nn.Module):
             # Find unique voxels and inverse mapping
             unique_voxels, inverse_indices = torch.unique(flat_indices, return_inverse=True)
             K = len(unique_voxels)
+            compressed_indices = torch.arange(K, device=device)
+
+            # compute compact grid bounds
+            mins = unique_voxels.min(dim=0)[0]
+            compressed_voxels = unique_voxels - mins
+
+            max_dims = compressed_voxels.max(dim=0)[0] + 1
+            voxel_dims = max_dims
+            voxel_dims_list.append(voxel_dims)
             # Print debug info
             print(f"prune_gs: batch={i} N_splats={N} unique_voxels={K} voxel_size={voxel_size} bbox_min={coords_min} bbox_max={coords_max}")
 
