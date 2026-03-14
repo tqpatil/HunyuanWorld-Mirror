@@ -1,5 +1,5 @@
 [中文阅读](README_zh.md)
-# **HunyuanWorld-Mirror**
+# **HunyuanWorld-Mirror - Fork for data generation **
 
 <p align="center">
   <img src="assets/teaser.jpg" width="95%" alt="HunyuanWorld-Mirror Teaser">
