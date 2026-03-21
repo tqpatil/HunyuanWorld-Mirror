@@ -540,8 +540,8 @@ def save_incremental_splats_and_render(
             cam_intrs_all = predictions.get("camera_intrs")
 
             if cam_poses_all is not None:
-                poses_subset = cam_poses_all[:, view_idx]
-                intrs_subset = cam_intrs_all[:, view_idx]
+                poses_subset = cam_poses_all
+                intrs_subset = cam_intrs_all
                 poses_np = poses_subset[0].detach().cpu().numpy()
                 intrs_np = intrs_subset[0].detach().cpu().numpy()
                 np.save(incremental_dir / f"camera_poses_view_{view_idx}.npy", poses_np)
