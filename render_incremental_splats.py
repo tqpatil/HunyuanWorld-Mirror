@@ -22,8 +22,13 @@ def main():
 
     os.makedirs(args.output_dir, exist_ok=True)
 
-    pattern = re.compile(r".*\.ply$")
-    ply_files = sorted([f for f in os.listdir(args.incremental_dir) if pattern.match(f)], key=lambda x: int(pattern.match(x).group(1)))
+    pattern = re.compile(r".*_(\d+)\.ply$")
+
+    ply_files = sorted(
+        [f for f in os.listdir(args.incremental_dir) if pattern.match(f)],
+        key=lambda x: int(pattern.match(x).group(1))
+    )
+
     if not ply_files:
         print('No matching PLY files found in', args.incremental_dir)
         return
