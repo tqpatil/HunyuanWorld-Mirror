@@ -105,8 +105,8 @@ def main():
         }
         match = pattern.match(ply_file)
         view_idx = int(match.group(1))
-        cam_poses_path = os.path.join(args.incremental_dir, f"camera_poses_views_0to{view_idx}.npz")
-        cam_intrs_path = os.path.join(args.incremental_dir, f"camera_intrs_views_0to{view_idx}.npz")
+        cam_poses_path = os.path.join(args.incremental_dir, f"camera_poses_view_{view_idx}.npz")
+        cam_intrs_path = os.path.join(args.incremental_dir, f"camera_intrs_view_{view_idx}.npz")
         if not os.path.exists(cam_poses_path) or not os.path.exists(cam_intrs_path):
             print(f"Camera files missing for {ply_file}, skipping.")
             if args.device == 'cuda':

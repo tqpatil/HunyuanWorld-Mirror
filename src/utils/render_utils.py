@@ -536,3 +536,14 @@ def save_incremental_splats_and_render(
             save_gs_ply(ply_path, means, scales, quats, colors, opacities,
                         pixel_x=pixel_x, pixel_y=pixel_y, view_idx=view_idx_arr)
             print(f"    Saved {len(means)} splats to {ply_path.name}")
+            cam_poses_all = predictions.get("camera_poses")
+            cam_intrs_all = predictions.get("camera_intrs")
+
+            if cam_poses_all is not None:
+                poses_subset = cam_poses_all[:, view_idx]
+                intrs_subset = cam_intrs_all[:, view_idx]
+                poses_np = poses_subset[0].detach().cpu().numpy()
+                intrs_np = intrs_subset[0].detach().cpu().numpy()
+                np.save(incremental_dir / f"camera_poses_view_{view_idx}.npy", poses_np)
+                np.save(incremental_dir / f"camera_intrs_view_{view_idx}.npy", intrs_np)
+        
