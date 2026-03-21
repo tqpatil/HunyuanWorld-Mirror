@@ -125,8 +125,8 @@ def main():
                 torch.cuda.empty_cache()
             continue
 
-        cam_poses = np.load(cam_poses_path).unsqueeze(0)  # [1, V, ...]
-        cam_intrs = np.load(cam_intrs_path).unsqueeze(0)  # [1, V, ...]
+        cam_poses = np.expand_dims(np.load(cam_poses_path), axis=0)  # [1, V, ...]
+        cam_intrs = np.expand_dims(np.load(cam_intrs_path), axis=0)  # [1, V, ...]
 
         cam_poses = torch.from_numpy(cam_poses).to(args.device)
         cam_intrs = torch.from_numpy(cam_intrs).to(args.device)
