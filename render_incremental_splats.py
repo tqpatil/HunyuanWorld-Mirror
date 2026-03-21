@@ -118,13 +118,16 @@ def main():
         view_idx = int(match.group(1))
         cam_poses_path = os.path.join(args.incremental_dir, f"camera_poses_view_{view_idx}.npy")
         cam_intrs_path = os.path.join(args.incremental_dir, f"camera_intrs_view_{view_idx}.npy")
+
         if not os.path.exists(cam_poses_path) or not os.path.exists(cam_intrs_path):
             print(f"Camera files missing for {ply_file}, skipping.")
             if args.device == 'cuda':
                 torch.cuda.empty_cache()
             continue
-        cam_poses = np.load(cam_poses_path)["camera_poses"]
-        cam_intrs = np.load(cam_intrs_path)["camera_intrs"]
+
+        cam_poses = np.load(cam_poses_path)
+        cam_intrs = np.load(cam_intrs_path)
+
         cam_poses = torch.from_numpy(cam_poses).to(args.device)
         cam_intrs = torch.from_numpy(cam_intrs).to(args.device)
         splats = preprocess_splats(splats, args.device, args.sh_degree)
