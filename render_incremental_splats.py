@@ -116,20 +116,31 @@ def main():
         }
         match = pattern.match(ply_file)
         view_idx = int(match.group(1))
-        cam_poses_path = os.path.join(args.incremental_dir, f"camera_poses_view_{view_idx}.npy")
-        cam_intrs_path = os.path.join(args.incremental_dir, f"camera_intrs_view_{view_idx}.npy")
 
-        if not os.path.exists(cam_poses_path) or not os.path.exists(cam_intrs_path):
-            print(f"Camera files missing for {ply_file}, skipping.")
+        # Load poses for all views 0 to view_idx
+        poses_list = []
+        intrs_list = []
+        missing_files = False
+        for v in range(view_idx + 1):
+            cam_poses_path = os.path.join(args.incremental_dir, f"camera_poses_view_{v}.npy")
+            cam_intrs_path = os.path.join(args.incremental_dir, f"camera_intrs_view_{v}.npy")
+            if not os.path.exists(cam_poses_path) or not os.path.exists(cam_intrs_path):
+                print(f"Camera files missing for view {v}, skipping {ply_file}.")
+                missing_files = True
+                break
+            cam_poses_np = np.load(cam_poses_path)
+            cam_intrs_np = np.load(cam_intrs_path)
+            poses_list.append(cam_poses_np)
+            intrs_list.append(cam_intrs_np)
+
+        if missing_files:
             if args.device == 'cuda':
                 torch.cuda.empty_cache()
             continue
 
-        cam_poses = np.expand_dims(np.load(cam_poses_path), axis=0)  # [1, V, ...]
-        cam_intrs = np.expand_dims(np.load(cam_intrs_path), axis=0)  # [1, V, ...]
-
-        cam_poses = torch.from_numpy(cam_poses).to(args.device)
-        cam_intrs = torch.from_numpy(cam_intrs).to(args.device)
+        # Stack poses into [1, view_idx+1, 4, 4] and [1, view_idx+1, 3, 3]
+        cam_poses = torch.stack([torch.from_numpy(p) for p in poses_list], dim=0).unsqueeze(0).to(args.device)
+        cam_intrs = torch.stack([torch.from_numpy(i) for i in intrs_list], dim=0).unsqueeze(0).to(args.device)
         splats = preprocess_splats(splats, args.device, args.sh_degree)
 
         # Concatenate splats from previous views
