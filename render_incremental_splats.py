@@ -24,15 +24,21 @@ def main():
 
     pattern = re.compile(r".*_(\d+)\.ply$")
 
-    ply_files = sorted(
-        [f for f in os.listdir(args.incremental_dir) if pattern.match(f)],
-        key=lambda x: int(pattern.match(x).group(1))
-    )
+    files = os.listdir(args.incremental_dir)
+
+    matches = []
+    for f in files:
+        m = pattern.match(f)
+        if m:
+            matches.append((f, int(m.group(1))))
+
+    print("Matched files:", matches)
+
+    ply_files = [f for f, _ in sorted(matches, key=lambda x: x[1])]
 
     if not ply_files:
         print('No matching PLY files found in', args.incremental_dir)
-        return
-
+        return    
     renderer = GaussianSplatRenderer(sh_degree=args.sh_degree).to(args.device)
 
     def preprocess_splats(splats, device, sh_degree):
