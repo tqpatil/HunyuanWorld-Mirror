@@ -542,6 +542,8 @@ def save_incremental_splats_and_render(
             if cam_poses_all is not None:
                 poses_subset = cam_poses_all[:, view_idx]
                 intrs_subset = cam_intrs_all[:, view_idx]
+                print("poses_subset shape:", poses_subset.shape)
+                print("intrs_subset shape:", intrs_subset.shape)
                 poses_np = poses_subset[0].detach().cpu().numpy()
                 intrs_np = intrs_subset[0].detach().cpu().numpy()
                 np.save(incremental_dir / f"camera_poses_view_{view_idx}.npy", poses_np)
