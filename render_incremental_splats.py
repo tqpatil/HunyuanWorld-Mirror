@@ -18,6 +18,7 @@ def main():
     parser.add_argument('--device', type=str, default='cuda', help='Device to use (cuda/cpu)')
     parser.add_argument('--sh_degree', type=int, default=0, help='Spherical harmonics degree (default: inferred from data)')
     parser.add_argument('--chunk_size', type=int, default=2, help='Number of views to render at once (reduce if OOM)')
+    parser.add_argument('--voxel_size', type=float, default=0.002, help='Voxel size for pruning splats')
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
@@ -98,6 +99,7 @@ def main():
 
     # Incrementally load and concatenate splats for each view
     all_splats = None
+    all_view_mapping = None
     for ply_file in tqdm(ply_files, desc='Rendering incremental splats'):
         ply_path = os.path.join(args.incremental_dir, ply_file)
         # Use updated loader: returns means, scales, quats, shs, opacities, pixel_x, pixel_y, view_idx
@@ -143,12 +145,43 @@ def main():
         cam_intrs = torch.stack([torch.from_numpy(i) for i in intrs_list], dim=0).unsqueeze(0).to(args.device)
         splats = preprocess_splats(splats, args.device, args.sh_degree)
 
+        # Create view mapping for this view's splats
+        view_mapping_new = torch.full((splats["means"].shape[0],), view_idx, dtype=torch.long, device=args.device)
+
         # Concatenate splats from previous views
         if all_splats is None:
             all_splats = {k: v.clone() for k, v in splats.items()}
+            all_view_mapping = view_mapping_new.clone()
         else:
             for k in all_splats:
                 all_splats[k] = torch.cat([all_splats[k], splats[k]], dim=0)
+            all_view_mapping = torch.cat([all_view_mapping, view_mapping_new], dim=0)
+
+        # Add weights for pruning (use opacities as proxy)
+        all_splats["weights"] = all_splats["opacities"].squeeze(-1)
+
+        # Prepare for pruning (convert to batched format)
+        pruned_input = {
+            "means": all_splats["means"].unsqueeze(0),
+            "quats": all_splats["quats"].unsqueeze(0),
+            "scales": all_splats["scales"].unsqueeze(0),
+            "opacities": all_splats["opacities"].unsqueeze(0),
+            "sh": all_splats["sh"].unsqueeze(0),
+            "weights": all_splats["weights"].unsqueeze(0),
+            "view_mapping": all_view_mapping.unsqueeze(0)
+        }
+
+        # Apply pruning
+        pruned = renderer.prune_gs(pruned_input, voxel_size=args.voxel_size)
+
+        # Extract pruned splats
+        all_splats = {}
+        for k in ["means", "quats", "scales", "sh"]:
+            all_splats[k] = pruned[k][0]
+        all_splats["opacities"] = pruned["opacities"][0].unsqueeze(-1)
+
+        # Update view mapping
+        all_view_mapping = pruned["view_mapping"][0] if "view_mapping" in pruned else None
 
         # Debug: Print splat color, opacity, and camera pose stats
         print(f"[DEBUG] splats_view_0_to_{view_idx} stats:")
