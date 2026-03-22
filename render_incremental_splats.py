@@ -165,7 +165,7 @@ def main():
             "means": all_splats["means"].unsqueeze(0),
             "quats": all_splats["quats"].unsqueeze(0),
             "scales": all_splats["scales"].unsqueeze(0),
-            "opacities": all_splats["opacities"].unsqueeze(0),
+            "opacities": all_splats["opacities"].squeeze(-1).unsqueeze(0),
             "sh": all_splats["sh"].unsqueeze(0),
             "weights": all_splats["weights"].unsqueeze(0),
             "view_mapping": all_view_mapping.unsqueeze(0)
