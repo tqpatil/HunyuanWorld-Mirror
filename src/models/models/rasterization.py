@@ -426,27 +426,30 @@ class GaussianSplatRenderer(nn.Module):
 
             # Reconcile view mapping: assign each merged splat to the view with highest opacity contribution
             if view_mapping_i is not None:
+                V = view_mapping_i.max().item() + 1
                 merged_view_mapping = torch.zeros(K, dtype=torch.long, device=device)
-                opacity_per_view = torch.zeros((K, view_mapping_i.max().item() + 1), device=device)
-                
-                # Accumulate opacities per view for each merged splat and record contributing views
+                opacity_per_view = torch.zeros((K, V), device=device)
+
+                # Accumulate opacities per view for each merged splat (vectorized over views)
+                for v in range(V):
+                    mask = view_mapping_i == v
+                    if mask.any():
+                        opacity_per_view[:, v].scatter_add_(0, inverse_indices[mask], splats_i["opacities"][mask])
+
+                # Record contributing views for each merged splat
                 batch_contribs = []
                 for voxel_idx in range(K):
                     # Find all original splats that merged into this voxel
                     mask = inverse_indices == voxel_idx
                     original_splat_indices = torch.where(mask)[0]
                     original_views = view_mapping_i[original_splat_indices]
-                    original_opacities = splats_i["opacities"][original_splat_indices]
-                    
-                    # Sum opacities per view
-                    opacity_per_view[voxel_idx].scatter_add_(0, original_views, original_opacities)
-                    
+
                     # Record which views contributed to this merged splat
                     unique_views = torch.unique(original_views)
-                    contrib_mask = torch.zeros(opacity_per_view.shape[1], dtype=torch.bool, device=device)
+                    contrib_mask = torch.zeros(V, dtype=torch.bool, device=device)
                     contrib_mask[unique_views.long()] = True
                     batch_contribs.append(contrib_mask)
-                
+
                 # Stack per-voxel contributor masks into [K, V] and append once per batch
                 if len(batch_contribs) > 0:
                     merged_view_contributors_list.append(torch.stack(batch_contribs, dim=0))
