@@ -159,7 +159,7 @@ def run_inference_on_scene(scene_path, output_root, args, model, device):
         print(f"📹 Processing video: {input_path}")
         input_frames_dir = outdir / "input_frames"
         input_frames_dir.mkdir(exist_ok=True)
-        img_paths = select_frames_by_camera_poses(str(input_path), n=5, output_dir=str(input_frames_dir))
+        img_paths = select_frames_by_camera_poses(str(input_path), n=10, output_dir=str(input_frames_dir))
         if not img_paths:
             raise RuntimeError("❌ Failed to extract frames from video")
         img_paths = sorted(img_paths)
@@ -172,7 +172,7 @@ def run_inference_on_scene(scene_path, output_root, args, model, device):
             print(f"📁 Processing DL3DV dataset: {input_path}")
             input_frames_dir = outdir / "input_frames"
             input_frames_dir.mkdir(exist_ok=True)
-            img_paths = select_frames_from_dl3dv(str(input_path), n=5, output_dir=str(input_frames_dir))
+            img_paths = select_frames_from_dl3dv(str(input_path), n=10, output_dir=str(input_frames_dir))
             if not img_paths:
                 raise RuntimeError("❌ Failed to select frames from DL3DV dataset")
             img_paths = sorted(img_paths)
@@ -430,8 +430,8 @@ def main():
     parser.add_argument("--confidence_percentile", type=float, default=10.0, help="Confidence percentile threshold for filtering (0-100, filters bottom X percent)")
     parser.add_argument("--edge_normal_threshold", type=float, default=5.0, help="Normal angle threshold in degrees for edge detection")
     parser.add_argument("--edge_depth_threshold", type=float, default=0.03, help="Relative depth threshold for edge detection")
-    parser.add_argument("--apply_confidence_mask", action="store_true", default=False, help="Apply confidence-based filtering")
-    parser.add_argument("--apply_edge_mask", action="store_true", default=False, help="Apply edge-based filtering")
+    parser.add_argument("--apply_confidence_mask", action="store_true", default=True, help="Apply confidence-based filtering")
+    parser.add_argument("--apply_edge_mask", action="store_true", default=True, help="Apply edge-based filtering")
     parser.add_argument("--apply_sky_mask", action="store_true", default=False, help="Apply sky mask filtering")
     # Save flags
     parser.add_argument("--save_pointmap", action="store_true", default=False, help="Save points PLY")
